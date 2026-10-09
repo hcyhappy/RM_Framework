@@ -1,5 +1,6 @@
 #include "threads.hpp"
 #include "main.h"
+#include "LED.hpp"
 
 void alive_thread_entry(ULONG)
 {
@@ -11,17 +12,17 @@ void alive_thread_entry(ULONG)
         if (status == TX_SUCCESS)
         {
             ++app_alive_count;
-            HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_SET);
-            HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
+            LED::Set(LED::Color::Red, false);
+            LED::Toggle(LED::Color::Green);
         }
         else
         {
-            HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
-            HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
+            LED::Set(LED::Color::Green, false);
+            LED::Set(LED::Color::Red, true);
         }
 #else
         ++app_alive_count;
-        HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
+        LED::Toggle(LED::Color::Green);
         tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND / 5);
 #endif
     }

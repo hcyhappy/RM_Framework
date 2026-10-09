@@ -1,0 +1,1665 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index b2144f0..8dec7e2 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -7,6 +7,6 @@
+ - ThreadX 内核固定为 `v6.4.2_rel`。不要直接修改 `board/Middlewares/ThreadX` 的第三方代码；升级时记录版本和来源。
+ - CMake 将生成文件中的 PendSV、SysTick、TIM6 和 UART 中断处理重命名；实际向量由 ThreadX/板级适配提供。修改时必须检查 ELF 符号和向量表，避免双重所有者。
+ - TIM6 为 HAL 1 ms 时基；SysTick 为 ThreadX 1 ms tick。线程内等待使用 `tx_thread_sleep` 或同步对象，避免忙等。ISR 不阻塞、不调 `HAL_Delay`。
+-- 当前仅启用 alive 和 heartbeat 演示，不启动尚未完成的 IMU、电机、加热或 `bsp_Init`。
++- 当前在 MX 初始化后执行 `bsp_Init`（CAN 接收、UART DMA 接收、PWM 检查），再启用 alive 和 heartbeat 演示；不自动启动舵机 PWM、IMU、电机或加热。
+ - 每一步单独编译并上板验证。编译成功与硬件验收分别记录，不把未观察的结果写成成功。
+ - 使用小范围提交；文档简洁，调试记录放在 `docs/logs.md`。提交中不包含 build、二进制、个人路径或重复工程压缩包。
+diff --git a/board/Core/Src/can.c b/board/Core/Src/can.c
+index 2769bba..27955ce 100644
+--- a/board/Core/Src/can.c
++++ b/board/Core/Src/can.c
+@@ -45,9 +45,9 @@ void MX_CAN1_Init(void)
+   hcan1.Init.TimeSeg1 = CAN_BS1_10TQ;
+   hcan1.Init.TimeSeg2 = CAN_BS2_3TQ;
+   hcan1.Init.TimeTriggeredMode = DISABLE;
+-  hcan1.Init.AutoBusOff = DISABLE;
++  hcan1.Init.AutoBusOff = ENABLE;
+   hcan1.Init.AutoWakeUp = DISABLE;
+-  hcan1.Init.AutoRetransmission = DISABLE;
++  hcan1.Init.AutoRetransmission = ENABLE;
+   hcan1.Init.ReceiveFifoLocked = DISABLE;
+   hcan1.Init.TransmitFifoPriority = DISABLE;
+   if (HAL_CAN_Init(&hcan1) != HAL_OK)
+@@ -77,9 +77,9 @@ void MX_CAN2_Init(void)
+   hcan2.Init.TimeSeg1 = CAN_BS1_10TQ;
+   hcan2.Init.TimeSeg2 = CAN_BS2_3TQ;
+   hcan2.Init.TimeTriggeredMode = DISABLE;
+-  hcan2.Init.AutoBusOff = DISABLE;
++  hcan2.Init.AutoBusOff = ENABLE;
+   hcan2.Init.AutoWakeUp = DISABLE;
+-  hcan2.Init.AutoRetransmission = DISABLE;
++  hcan2.Init.AutoRetransmission = ENABLE;
+   hcan2.Init.ReceiveFifoLocked = DISABLE;
+   hcan2.Init.TransmitFifoPriority = DISABLE;
+   if (HAL_CAN_Init(&hcan2) != HAL_OK)
+diff --git a/board/Core/Src/main.c b/board/Core/Src/main.c
+index 881ee24..d0444c6 100644
+--- a/board/Core/Src/main.c
++++ b/board/Core/Src/main.c
+@@ -29,6 +29,7 @@
+ /* Private includes ----------------------------------------------------------*/
+ /* USER CODE BEGIN Includes */
+ #include "app_threadx.h"
++#include "bsp.hpp"
+ 
+ /* USER CODE END Includes */
+ 
+@@ -104,6 +105,11 @@ int main(void)
+   MX_TIM1_Init();
+   MX_TIM8_Init();
+   /* USER CODE BEGIN 2 */
++  if (bsp_Init() != HAL_OK)
++  {
++    HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
++    Error_Handler();
++  }
+   app_threadx_start();
+ 
+   /* USER CODE END 2 */
+diff --git a/bsp/include/bsp.hpp b/bsp/include/bsp.hpp
+index f7f57df..2688da0 100644
+--- a/bsp/include/bsp.hpp
++++ b/bsp/include/bsp.hpp
+@@ -1,20 +1,12 @@
+-//
+-// Created by cosmosmount on 2025/8/30.
+-//
+-
+-#ifndef RM26_BSP_HPP
+-#define RM26_BSP_HPP
+-
+-
++#ifndef RM_BSP_HPP
++#define RM_BSP_HPP
++#include "main.h"
+ #ifdef __cplusplus
+-extern  "C" {
++extern "C" {
+ #endif
+-
+-    void bsp_Init(void);
+-
++/* Call once after all MX_* initializers, with IRQs enabled. */
++HAL_StatusTypeDef bsp_Init(void);
+ #ifdef __cplusplus
+ }
+ #endif
+-
+-
+-#endif //RM26_BSP_HPP
+\ No newline at end of file
++#endif
+diff --git a/bsp/include/bsp_can.hpp b/bsp/include/bsp_can.hpp
+index 8819acf..4ffc8ca 100644
+--- a/bsp/include/bsp_can.hpp
++++ b/bsp/include/bsp_can.hpp
+@@ -1,24 +1,12 @@
+-#ifndef BSP_CAN_H
+-#define BSP_CAN_H
+-
+-#include "main.h"
++#ifndef BSP_CAN_HPP
++#define BSP_CAN_HPP
+ #include "can.h"
+-
+-/**
+- * @brief 初始化CAN滤波器配置。
+- * 设置CAN硬件的滤波器，用于优化接收数据的处理。
+- * 更多信息，请参考原文，链接：https://blog.csdn.net/weixin_54448108/article/details/128570593
+- */
+-void CAN_Init(void);
+-
+-/**
+- * @brief 发送CAN数据。
+- * @param hcan 指向CAN句柄的指针，用于配置CAN传输。
+- * @param StdId CAN消息的标准标识符
+- * @param msg 发送的数据
+- * @param len 数据长度
+- * @note 该函数用于发送CAN数据，目前只支持标准帧
+- */
+-void CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Id, uint8_t *msg, uint16_t len);
+-
+-#endif // BSP_CAN_HPP
++struct CAN_RxFrame { uint32_t id; uint8_t length; uint8_t data[8]; };
++struct CAN_Stats { uint32_t received, dropped, errors; };
++HAL_StatusTypeDef CAN_Init(void);
++/* Standard data frames only; length 0..8. HAL_OK means mailbox accepted. */
++HAL_StatusTypeDef CAN_Transmit(CAN_HandleTypeDef *, uint32_t id, const uint8_t *, uint16_t length);
++/* Nonblocking; HAL_BUSY means empty. 16 queued frames per bus. */
++HAL_StatusTypeDef CAN_Read(CAN_HandleTypeDef *, CAN_RxFrame *);
++HAL_StatusTypeDef CAN_GetStats(CAN_HandleTypeDef *, CAN_Stats *);
++#endif
+diff --git a/bsp/include/bsp_critical.hpp b/bsp/include/bsp_critical.hpp
+new file mode 100644
+index 0000000..2502df0
+--- /dev/null
++++ b/bsp/include/bsp_critical.hpp
+@@ -0,0 +1,14 @@
++#ifndef BSP_CRITICAL_HPP
++#define BSP_CRITICAL_HPP
++#include "main.h"
++/* Bounded register/queue work only. Never wrap blocking HAL calls. */
++class BspCritical {
++public:
++    BspCritical() : saved_(__get_PRIMASK()) { __disable_irq(); }
++    ~BspCritical() { __set_PRIMASK(saved_); }
++    BspCritical(const BspCritical &) = delete;
++    BspCritical &operator=(const BspCritical &) = delete;
++private:
++    uint32_t saved_;
++};
++#endif
+diff --git a/bsp/include/bsp_pwm.hpp b/bsp/include/bsp_pwm.hpp
+index c410a33..4601545 100644
+--- a/bsp/include/bsp_pwm.hpp
++++ b/bsp/include/bsp_pwm.hpp
+@@ -1,41 +1,14 @@
+-//
+-// Created by cosmosmount on 2025/9/2.
+-//
+-
+-#ifndef RM26_H7_BSP_PWM_HPP
+-#define RM26_H7_BSP_PWM_HPP
+-
++#ifndef BSP_PWM_HPP
++#define BSP_PWM_HPP
+ #include "tim.h"
+-
+-/**
+- * @brief  PWM初始化
+- */
+-void PWM_Init(void);
+-
+-/**
+- * @brief  PWM启动，只是对HAL库函数的形式上的封装
+- */
+-void PWM_Start(TIM_HandleTypeDef *htim, uint32_t Channel);
+-
+-/**
+- * @brief  PWM停止，只是对HAL库函数的形式上的封装
+- */
+-void PWM_Stop(TIM_HandleTypeDef *htim, uint32_t Channel);
+-
+-/**
+- * @brief  设置PWM周期
+- * @param  htim: 定时器句柄
+- * @param  period: 周期，单位为秒
+- * 只是对HAL库函数的形式上的封装
+- */
+-void PWM_SetPeriod(TIM_HandleTypeDef *htim, float period);
+-
+-/**
+- * @brief  设置PWM占空比
+- * @param  htim: 定时器句柄
+- * @param  dutyratio: 占空比，0~1
+- * 只是对HAL库函数的形式上的封装
+- */
+-void PWM_SetDutyRatio(TIM_HandleTypeDef *htim, float dutyratio, uint32_t channel);
+-
+-#endif //RM26_H7_BSP_PWM_HPP
+\ No newline at end of file
++/* Validate MX_TIM1/8 initialization; no channel is automatically started. */
++HAL_StatusTypeDef PWM_Init(void);
++HAL_StatusTypeDef PWM_Start(TIM_HandleTypeDef *, uint32_t channel);
++HAL_StatusTypeDef PWM_Stop(TIM_HandleTypeDef *, uint32_t channel);
++/* Seconds. Timer must be stopped; changes all channel periods and preserves duty.
++ * Supported period is 2..65535 counter ticks (16-bit CCR supports 100% duty). */
++HAL_StatusTypeDef PWM_SetPeriod(TIM_HandleTypeDef *, float period_s);
++HAL_StatusTypeDef PWM_SetDutyRatio(TIM_HandleTypeDef *, float ratio, uint32_t channel);
++/* Servo convenience: microseconds, not percent. Reject pulses beyond period. */
++HAL_StatusTypeDef PWM_SetPulseUs(TIM_HandleTypeDef *, float pulse_us, uint32_t channel);
++#endif
+diff --git a/bsp/include/bsp_usart.hpp b/bsp/include/bsp_usart.hpp
+index 162c1cd..23bddab 100644
+--- a/bsp/include/bsp_usart.hpp
++++ b/bsp/include/bsp_usart.hpp
+@@ -1,48 +1,26 @@
+ #ifndef BSP_USART_HPP
+ #define BSP_USART_HPP
+-
+-#include "main.h"
+-#include "stm32f4xx_hal_uart.h"
+-
+-enum USART_Mode
+-{
+-    USART_MODE_BLOCK = 0,
+-    USART_MODE_DMA = 1,
+-    USART_MODE_IT = 2
+-  };
+-
+-/**
+- * @brief 初始化串口。
+- */
+-void USART_Init(void);
+-
+-/**
+- * @brief 初始化串口1。
+- * @note 串口1用于调试信息输出。使用DMA发送和接收。
+- */
+-void USART1_Init(void);
+-
+-/**
+- * @brief 初始化串口6。
+- * @note 串口6用于和裁判系统通信。使用DMA发送和接收。
+- */
+-void USART6_Init(void);
+-
+-/**
+- * @brief 串口发送数据。
+- * @param huart 指向串口句柄的指针
+- * @param pData 发送的数据
+- * @param Size 数据长度
+- * @param mode 发送模式
+- */
+-void USART_Transmit(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size, enum USART_Mode mode);
+-
+-/**
+- * @brief 串口接收数据。
+- * @param huart 指向串口句柄的指针
+- * @param pData 接收数据的缓冲区
+- * @param Size 数据长度
+- */
+-void USART_Receive(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size);
+-
+-#endif //  __BSP_USART_H
++#include "usart.h"
++enum USART_Mode : uint8_t { USART_MODE_BLOCK = 0, USART_MODE_DMA = 1, USART_MODE_IT = 2 };
++struct USART_Stats {
++    uint32_t received_bytes, dropped_bytes, errors, last_error;
++    HAL_StatusTypeDef receive_status;
++};
++/* After MX_DMA_Init + MX_USART*_UART_Init. Starts 256-byte idle DMA RX. */
++HAL_StatusTypeDef USART_Init(void);
++HAL_StatusTypeDef USART1_Init(void);
++HAL_StatusTypeDef USART6_Init(void);
++/* DMA/IT copy <=256 bytes into BSP storage; caller can reuse its buffer.
++ * BLOCK uses a finite timeout, never in ISR. HAL_BUSY requires caller policy. */
++HAL_StatusTypeDef USART_Transmit(UART_HandleTypeDef *, const uint8_t *, uint16_t,
++                               USART_Mode, uint32_t timeout_ms = 100);
++/* Stop RX first. Custom persistent DMA buffer <=256 B, ordinary SRAM only.
++ * Auto-rearmed; caller must keep storage alive until StopReceive succeeds. */
++HAL_StatusTypeDef USART_Receive(UART_HandleTypeDef *, uint8_t *, uint16_t);
++HAL_StatusTypeDef USART_StopReceive(UART_HandleTypeDef *);
++/* Call periodically from the RX owner thread to retry after HAL errors. */
++HAL_StatusTypeDef USART_Service(UART_HandleTypeDef *);
++/* Nonblocking stream read: at most 256 bytes/call; ring capacity 511 bytes. */
++uint16_t USART_Read(UART_HandleTypeDef *, uint8_t *, uint16_t capacity);
++HAL_StatusTypeDef USART_GetStats(UART_HandleTypeDef *, USART_Stats *);
++#endif
+diff --git a/bsp/src/bsp.cpp b/bsp/src/bsp.cpp
+index 2c6c48b..041ced7 100644
+--- a/bsp/src/bsp.cpp
++++ b/bsp/src/bsp.cpp
+@@ -1,9 +1,12 @@
+ #include "bsp.hpp"
+-
+ #include "bsp_can.hpp"
+ #include "bsp_usart.hpp"
+-
+-void bsp_Init() {
+-    USART_Init();
+-    CAN_Init();
++#include "bsp_pwm.hpp"
++HAL_StatusTypeDef bsp_Init(void) {
++    if (__get_IPSR() || __get_PRIMASK()) return HAL_ERROR;
++    HAL_StatusTypeDef status = PWM_Init();
++    if (status != HAL_OK) return status;
++    status = USART_Init();
++    if (status != HAL_OK) return status;
++    return CAN_Init();
+ }
+diff --git a/bsp/src/bsp_can.cpp b/bsp/src/bsp_can.cpp
+index b747f69..20103e3 100644
+--- a/bsp/src/bsp_can.cpp
++++ b/bsp/src/bsp_can.cpp
+@@ -1,50 +1,120 @@
+ #include "bsp_can.hpp"
++#include "bsp_critical.hpp"
++#include <cstring>
+ 
+-extern CAN_HandleTypeDef hcan1;
+-extern CAN_HandleTypeDef hcan2;
+-
+-/**
+- * @brief 初始化CAN滤波器配置。
+- * 设置CAN硬件的滤波器，用于优化接收数据的处理。
+- * 更多信息，请参考原文，链接：https://blog.csdn.net/weixin_54448108/article/details/128570593
+- */
+-void CAN_Init(void)
+-{
+-    CAN_FilterTypeDef can_filter_st;                   ///< 定义过滤器结构体
+-    can_filter_st.FilterActivation = ENABLE;           ///< ENABLE使能过滤器
+-    can_filter_st.FilterMode = CAN_FILTERMODE_IDMASK;  ///< 设置过滤器模式--标识符屏蔽位模式
+-    can_filter_st.FilterScale = CAN_FILTERSCALE_32BIT; ///< 过滤器的位宽 32 位
+-    can_filter_st.FilterIdHigh = 0x0000;               ///< ID高位
+-    can_filter_st.FilterIdLow = 0x0000;                ///< ID低位
+-    can_filter_st.FilterMaskIdHigh = 0x0000;           ///< 过滤器掩码高位
+-    can_filter_st.FilterMaskIdLow = 0x0000;            ///< 过滤器掩码低位
+-
+-    can_filter_st.FilterBank = 0;                                      ///< 过滤器组-双CAN可指定0~27
+-    can_filter_st.FilterFIFOAssignment = CAN_RX_FIFO0;                 ///< 与过滤器组管理的 FIFO
+-    HAL_CAN_ConfigFilter(&hcan1, &can_filter_st);                      ///< HAL库配置过滤器函数
+-    HAL_CAN_Start(&hcan1);                                             ///< 使能CAN1控制器
+-    HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING); ///< 使能CAN的各种中断
+-
+-    can_filter_st.SlaveStartFilterBank = 14;                           ///< 双CAN模式下规定CAN的主从模式的过滤器分配，从过滤器为14
+-    can_filter_st.FilterBank = 14;                                     ///< 过滤器组-双CAN可指定0~27
+-    HAL_CAN_ConfigFilter(&hcan2, &can_filter_st);                      ///< HAL库配置过滤器函数
+-    HAL_CAN_Start(&hcan2);                                             ///< 使能CAN2控制器
+-    HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING); ///< 使能CAN的各种中断
++namespace {
++constexpr uint8_t capacity = 16;
++struct Bus {
++    bool initialized;
++    CAN_RxFrame frames[capacity];
++    uint8_t head, tail, count;
++    CAN_Stats stats;
++};
++Bus buses[2]{};
++Bus *bus_for(CAN_HandleTypeDef *hcan) {
++    if (hcan == &hcan1 && hcan->Instance == CAN1) return &buses[0];
++    if (hcan == &hcan2 && hcan->Instance == CAN2) return &buses[1];
++    return nullptr;
+ }
+-
+-void CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Id, uint8_t *msg, uint16_t len)
+-{
+-    if (HAL_CAN_GetTxMailboxesFreeLevel(hcan) == 0)
++bool clock_enabled(CAN_HandleTypeDef *hcan) {
++    return __HAL_RCC_CAN1_IS_CLK_ENABLED() &&
++           (hcan == &hcan1 || __HAL_RCC_CAN2_IS_CLK_ENABLED());
++}
++bool ready(CAN_HandleTypeDef *hcan, Bus *bus) {
++    return bus && bus->initialized && clock_enabled(hcan) &&
++           HAL_CAN_GetState(hcan) == HAL_CAN_STATE_LISTENING;
++}
++HAL_StatusTypeDef initialize(CAN_HandleTypeDef *hcan, uint32_t bank) {
++    Bus *bus = bus_for(hcan);
++    if (!bus || !clock_enabled(hcan) ||
++        !NVIC_GetEnableIRQ(hcan == &hcan1 ? CAN1_RX0_IRQn : CAN2_RX0_IRQn)) return HAL_ERROR;
++    if (ready(hcan, bus)) return HAL_OK;
++    if (HAL_CAN_GetState(hcan) != HAL_CAN_STATE_READY) return HAL_ERROR;
++    CAN_FilterTypeDef filter{};
++    filter.FilterActivation = ENABLE;
++    filter.FilterMode = CAN_FILTERMODE_IDMASK;
++    filter.FilterScale = CAN_FILTERSCALE_32BIT;
++    filter.FilterBank = bank;
++    filter.FilterFIFOAssignment = CAN_RX_FIFO0;
++    filter.SlaveStartFilterBank = 14; // Before configuring either controller.
++    // Accept all in hardware; callback rejects extended and remote frames.
++    HAL_StatusTypeDef status = HAL_CAN_ConfigFilter(hcan, &filter);
++    if (status != HAL_OK) return status;
++    status = HAL_CAN_Start(hcan); // HAL timeout needs IRQs enabled.
++    if (status != HAL_OK) return status;
+     {
+-        // 如果邮箱已满，可以选择等待或者采取其他操作
+-        // 例如，可以添加一个超时机制或者直接返回错误状态
+-        // Monitor::instance()->Log_Messages(Monitor::WARNING, (uint8_t *)"CAN Tx Mailbox is full\r\n");
+-        return;
++        BspCritical lock;
++        bus->initialized = true;
++        status = HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
++        if (status != HAL_OK) bus->initialized = false;
++    }
++    if (status != HAL_OK) (void)HAL_CAN_Stop(hcan);
++    return status;
++}
++}
++HAL_StatusTypeDef CAN_Init(void) {
++    if (__get_IPSR() || __get_PRIMASK()) return HAL_ERROR;
++    HAL_StatusTypeDef status = initialize(&hcan1, 0);
++    return status == HAL_OK ? initialize(&hcan2, 14) : status;
++}
++HAL_StatusTypeDef CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t id,
++                             const uint8_t *data, uint16_t length) {
++    if (id > 0x7ffU || length > 8U || (!data && length)) return HAL_ERROR;
++    CAN_TxHeaderTypeDef header{};
++    header.StdId = id;
++    header.IDE = CAN_ID_STD;
++    header.RTR = CAN_RTR_DATA;
++    header.DLC = length;
++    uint8_t payload[8]{}; // HAL reads eight bytes regardless of DLC.
++    if (length) std::memcpy(payload, data, length);
++    uint32_t mailbox;
++    BspCritical lock; // Serialize mailbox selection and register writes.
++    if (!ready(hcan, bus_for(hcan))) return HAL_ERROR;
++    if (hcan->Instance->ESR & CAN_ESR_BOFF) return HAL_ERROR;
++    if (!HAL_CAN_GetTxMailboxesFreeLevel(hcan)) return HAL_BUSY;
++    return HAL_CAN_AddTxMessage(hcan, &header, payload, &mailbox);
++}
++HAL_StatusTypeDef CAN_Read(CAN_HandleTypeDef *hcan, CAN_RxFrame *frame) {
++    if (!frame) return HAL_ERROR;
++    BspCritical lock;
++    Bus *bus = bus_for(hcan);
++    if (!ready(hcan, bus)) return HAL_ERROR;
++    if (!bus->count) return HAL_BUSY;
++    *frame = bus->frames[bus->tail];
++    bus->tail = (bus->tail + 1U) % capacity;
++    --bus->count;
++    return HAL_OK;
++}
++HAL_StatusTypeDef CAN_GetStats(CAN_HandleTypeDef *hcan, CAN_Stats *stats) {
++    if (!stats) return HAL_ERROR;
++    BspCritical lock;
++    Bus *bus = bus_for(hcan);
++    if (!bus || !bus->initialized) return HAL_ERROR;
++    *stats = bus->stats;
++    return HAL_OK;
++}
++extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
++    BspCritical lock;
++    Bus *bus = bus_for(hcan);
++    if (!ready(hcan, bus)) return;
++    // Hardware FIFO depth is 3; bound work even under continuous traffic.
++    for (unsigned i = 0; i < 3 && HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0); ++i) {
++        CAN_RxHeaderTypeDef header{};
++        CAN_RxFrame frame{};
++        if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, frame.data) != HAL_OK) {
++            ++bus->stats.errors;
++            break;
++        }
++        if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
++            header.StdId > 0x7ffU || header.DLC > 8U || bus->count == capacity) {
++            ++bus->stats.dropped;
++            continue;
++        }
++        frame.id = header.StdId;
++        frame.length = static_cast<uint8_t>(header.DLC);
++        bus->frames[bus->head] = frame;
++        bus->head = (bus->head + 1U) % capacity;
++        ++bus->count;
++        ++bus->stats.received;
+     }
+-    // TODO: 校验标准帧 ID 和 DLC (0~8)，构造帧头并调用 HAL_CAN_AddTxMessage。
+-    (void)Id;
+-    (void)msg;
+-    (void)len;
+ }
+-
+-// TODO: 实现 CAN 接收回调，根据总线和标准帧 ID 分发电机反馈。
+diff --git a/bsp/src/bsp_pwm.cpp b/bsp/src/bsp_pwm.cpp
+index 89d779a..eac5628 100644
+--- a/bsp/src/bsp_pwm.cpp
++++ b/bsp/src/bsp_pwm.cpp
+@@ -1,30 +1,96 @@
+-//
+-// Created by cosmosmount on 2025/9/2.
+-//
+-
+ #include "bsp_pwm.hpp"
++#include "bsp_critical.hpp"
++#include <cmath>
+ 
+-void PWM_Init(void)
+-{
+-    // TODO: 根据实际使用的定时器和通道完成 PWM 初始化。
++namespace {
++bool initialized[2]{};
++int timer_index(TIM_HandleTypeDef *htim) {
++    if (htim == &htim1 && htim->Instance == TIM1) return 0;
++    if (htim == &htim8 && htim->Instance == TIM8) return 1;
++    return -1;
+ }
+-
+-void PWM_Start(TIM_HandleTypeDef *htim, uint32_t Channel)
+-{
+-    // TODO: 调用 HAL 启动指定定时器通道的 PWM，并检查返回状态。
++bool hardware_ready(TIM_HandleTypeDef *htim) {
++    const int index = timer_index(htim);
++    return index >= 0 &&
++        (index == 0 ? __HAL_RCC_TIM1_IS_CLK_ENABLED() : __HAL_RCC_TIM8_IS_CLK_ENABLED()) &&
++        htim->State == HAL_TIM_STATE_READY &&
++        htim->Init.CounterMode == TIM_COUNTERMODE_UP;
+ }
+-
+-void PWM_Stop(TIM_HandleTypeDef *htim, uint32_t Channel)
+-{
+-    // TODO: 调用 HAL 停止指定定时器通道的 PWM。
++bool ready(TIM_HandleTypeDef *htim) {
++    const int index = timer_index(htim);
++    return index >= 0 && initialized[index] && hardware_ready(htim);
+ }
+-
+-void PWM_SetPeriod(TIM_HandleTypeDef *htim, float period_s)
+-{
+-    // TODO: 根据定时器时钟和预分频值，将秒转换为 ARR 并更新周期。
++bool valid_channel(TIM_HandleTypeDef *htim, uint32_t channel) {
++    return channel == TIM_CHANNEL_1 || channel == TIM_CHANNEL_2 ||
++           channel == TIM_CHANNEL_3 || (htim == &htim1 && channel == TIM_CHANNEL_4);
+ }
+-
+-void PWM_SetDutyRatio(TIM_HandleTypeDef *htim, float dutyratio, uint32_t channel)
+-{
+-    // TODO: 将 [0, 1] 占空比换算为比较值，写入指定通道。
++double tick_hz(TIM_HandleTypeDef *htim) {
++    RCC_ClkInitTypeDef clock{};
++    uint32_t latency;
++    HAL_RCC_GetClockConfig(&clock, &latency);
++    const uint32_t timer_clock = HAL_RCC_GetPCLK2Freq() *
++        (clock.APB2CLKDivider == RCC_HCLK_DIV1 ? 1U : 2U);
++    return static_cast<double>(timer_clock) / (htim->Instance->PSC + 1U);
++}
++}
++HAL_StatusTypeDef PWM_Init(void) {
++    BspCritical lock;
++    if (!hardware_ready(&htim1) || !hardware_ready(&htim8)) return HAL_ERROR;
++    initialized[0] = initialized[1] = true;
++    return HAL_OK;
++}
++HAL_StatusTypeDef PWM_Start(TIM_HandleTypeDef *htim, uint32_t channel) {
++    BspCritical lock;
++    if (!ready(htim) || !valid_channel(htim, channel)) return HAL_ERROR;
++    if (HAL_TIM_GetChannelState(htim, channel) != HAL_TIM_CHANNEL_STATE_READY) return HAL_BUSY;
++    return HAL_TIM_PWM_Start(htim, channel);
++}
++HAL_StatusTypeDef PWM_Stop(TIM_HandleTypeDef *htim, uint32_t channel) {
++    BspCritical lock;
++    if (!ready(htim) || !valid_channel(htim, channel)) return HAL_ERROR;
++    if (HAL_TIM_GetChannelState(htim, channel) == HAL_TIM_CHANNEL_STATE_READY) return HAL_OK;
++    return HAL_TIM_PWM_Stop(htim, channel);
++}
++HAL_StatusTypeDef PWM_SetPeriod(TIM_HandleTypeDef *htim, float period_s) {
++    if (!std::isfinite(period_s) || period_s <= 0.0f) return HAL_ERROR;
++    BspCritical lock;
++    if (!ready(htim)) return HAL_ERROR;
++    if (htim->Instance->CR1 & TIM_CR1_CEN) return HAL_BUSY;
++    const double desired = period_s * tick_hz(htim);
++    if (!std::isfinite(desired) || desired < 1.5 || desired >= 65535.5) return HAL_ERROR;
++    const uint32_t ticks = static_cast<uint32_t>(desired + 0.5);
++    const uint32_t old_ticks = __HAL_TIM_GET_AUTORELOAD(htim) + 1U;
++    const unsigned count = htim == &htim1 ? 4 : 3;
++    for (unsigned i = 0; i < count; ++i) {
++        const uint32_t channel = TIM_CHANNEL_1 + i * 4U;
++        const double scaled = static_cast<double>(__HAL_TIM_GET_COMPARE(htim, channel)) *
++                              ticks / old_ticks;
++        const uint32_t value = scaled >= ticks ? ticks : static_cast<uint32_t>(scaled + 0.5);
++        __HAL_TIM_SET_COMPARE(htim, channel, value);
++    }
++    __HAL_TIM_SET_AUTORELOAD(htim, ticks - 1U);
++    htim->Init.Period = ticks - 1U;
++    __HAL_TIM_SET_COUNTER(htim, 0);
++    htim->Instance->EGR = TIM_EGR_UG; // Latch shadow registers while stopped.
++    __HAL_TIM_CLEAR_FLAG(htim, TIM_FLAG_UPDATE);
++    return HAL_OK;
++}
++HAL_StatusTypeDef PWM_SetDutyRatio(TIM_HandleTypeDef *htim, float ratio, uint32_t channel) {
++    if (!std::isfinite(ratio) || ratio < 0.0f || ratio > 1.0f) return HAL_ERROR;
++    BspCritical lock;
++    if (!ready(htim) || !valid_channel(htim, channel)) return HAL_ERROR;
++    const uint32_t ticks = __HAL_TIM_GET_AUTORELOAD(htim) + 1U;
++    if (ticks > 65535U) return HAL_ERROR;
++    __HAL_TIM_SET_COMPARE(htim, channel, static_cast<uint32_t>(ratio * ticks + 0.5));
++    return HAL_OK;
++}
++HAL_StatusTypeDef PWM_SetPulseUs(TIM_HandleTypeDef *htim, float pulse_us, uint32_t channel) {
++    if (!std::isfinite(pulse_us) || pulse_us < 0.0f) return HAL_ERROR;
++    BspCritical lock;
++    if (!ready(htim) || !valid_channel(htim, channel)) return HAL_ERROR;
++    const uint32_t ticks = __HAL_TIM_GET_AUTORELOAD(htim) + 1U;
++    const double desired = pulse_us * tick_hz(htim) / 1000000.0;
++    if (!std::isfinite(desired) || desired > ticks || ticks > 65535U) return HAL_ERROR;
++    __HAL_TIM_SET_COMPARE(htim, channel, static_cast<uint32_t>(desired + 0.5));
++    return HAL_OK;
+ }
+diff --git a/bsp/src/bsp_usart.cpp b/bsp/src/bsp_usart.cpp
+index 4c7cbb9..a65b5a9 100644
+--- a/bsp/src/bsp_usart.cpp
++++ b/bsp/src/bsp_usart.cpp
+@@ -1,34 +1,232 @@
+ #include "bsp_usart.hpp"
++#include "bsp_critical.hpp"
++#include <cstring>
++#include <cstdint>
+ 
+-void USART_Init(void)
+-{
+-  USART1_Init();
+-  USART6_Init();
+-}
+-
+-void USART6_Init()
+-{
+-  // TODO: 配置 USART6 的 DMA 接收、发送及空闲中断，并启动接收。
+-};
+-
+-void USART1_Init()
+-{
+-  // TODO: 配置 USART1 的 DMA 接收、发送及空闲中断，并启动接收。
++namespace {
++constexpr uint16_t transfer_capacity = 256, ring_capacity = 512;
++struct Port {
++    bool initialized, receiving, tx_busy, tx_async, tx_needs_abort;
++    uint8_t rx[transfer_capacity], tx[transfer_capacity], ring[ring_capacity];
++    uint8_t *rx_buffer;
++    uint16_t rx_capacity, head, tail;
++    USART_Stats stats;
+ };
+-
+-void USART_Transmit(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size, enum USART_Mode mode)
+-{
+-  // TODO: 检查参数，并按 mode 选择阻塞、DMA 或中断发送。
+-  (void)huart;
+-  (void)pData;
+-  (void)Size;
+-  (void)mode;
++Port ports[2]{};
++Port *port_for(UART_HandleTypeDef *huart) {
++    if (huart == &huart1 && huart->Instance == USART1) return &ports[0];
++    if (huart == &huart6 && huart->Instance == USART6) return &ports[1];
++    return nullptr;
+ }
+-
+-void USART_Receive(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size)
+-{
+-  // TODO: 选择接收方式并启动 HAL UART 接收。
+-  (void)huart;
+-  (void)pData;
+-  (void)Size;
++IRQn_Type uart_irq(UART_HandleTypeDef *huart) {
++    return huart == &huart1 ? USART1_IRQn : USART6_IRQn;
++}
++bool hardware_ready(UART_HandleTypeDef *huart) {
++    return port_for(huart) &&
++        (huart == &huart1 ? __HAL_RCC_USART1_IS_CLK_ENABLED() : __HAL_RCC_USART6_IS_CLK_ENABLED()) &&
++        huart->gState != HAL_UART_STATE_RESET && huart->gState != HAL_UART_STATE_ERROR &&
++        huart->RxState != HAL_UART_STATE_RESET &&
++        huart->Init.WordLength == UART_WORDLENGTH_8B &&
++        huart->Init.Parity == UART_PARITY_NONE && huart->Init.Mode == UART_MODE_TX_RX;
++}
++bool dma_ready(UART_HandleTypeDef *huart, bool receive) {
++    DMA_HandleTypeDef *dma = receive ? huart->hdmarx : huart->hdmatx;
++    DMA_Stream_TypeDef *stream;
++    IRQn_Type irq;
++    if (huart == &huart1) {
++        stream = receive ? DMA2_Stream2 : DMA2_Stream7;
++        irq = receive ? DMA2_Stream2_IRQn : DMA2_Stream7_IRQn;
++    } else {
++        stream = receive ? DMA2_Stream1 : DMA2_Stream6;
++        irq = receive ? DMA2_Stream1_IRQn : DMA2_Stream6_IRQn;
++    }
++    return __HAL_RCC_DMA2_IS_CLK_ENABLED() && dma && dma->Instance == stream &&
++        dma->Parent == huart && dma->State != HAL_DMA_STATE_RESET &&
++        dma->Init.Channel == (huart == &huart1 ? DMA_CHANNEL_4 : DMA_CHANNEL_5) &&
++        dma->Init.Direction == (receive ? DMA_PERIPH_TO_MEMORY : DMA_MEMORY_TO_PERIPH) &&
++        dma->Init.Mode == DMA_NORMAL && dma->Init.PeriphInc == DMA_PINC_DISABLE &&
++        dma->Init.MemInc == DMA_MINC_ENABLE &&
++        dma->Init.PeriphDataAlignment == DMA_PDATAALIGN_BYTE &&
++        dma->Init.MemDataAlignment == DMA_MDATAALIGN_BYTE && NVIC_GetEnableIRQ(irq) &&
++        NVIC_GetEnableIRQ(uart_irq(huart));
++}
++bool dma_memory(const uint8_t *data, uint16_t size) {
++    const uintptr_t address = reinterpret_cast<uintptr_t>(data);
++    return size && address >= 0x20000000U && address < 0x20020000U &&
++           size <= 0x20020000U - address; // CCM/FLASH cannot be DMA RX storage.
++}
++HAL_StatusTypeDef arm_receive(UART_HandleTypeDef *huart, Port *port) {
++    if (!hardware_ready(huart) || !dma_ready(huart, true) ||
++        !dma_memory(port->rx_buffer, port->rx_capacity)) return HAL_ERROR;
++    HAL_StatusTypeDef status = HAL_UARTEx_ReceiveToIdle_DMA(huart, port->rx_buffer,
++                                                          port->rx_capacity);
++    if (status == HAL_OK) __HAL_DMA_DISABLE_IT(huart->hdmarx, DMA_IT_HT);
++    return status;
++}
++HAL_StatusTypeDef initialize(UART_HandleTypeDef *huart) {
++    BspCritical lock;
++    Port *port = port_for(huart);
++    if (!hardware_ready(huart) || !dma_ready(huart, true) || !dma_ready(huart, false))
++        return HAL_ERROR;
++    if (port->initialized) return HAL_OK;
++    port->rx_buffer = port->rx;
++    port->rx_capacity = transfer_capacity;
++    port->receiving = true;
++    port->stats.receive_status = arm_receive(huart, port);
++    port->initialized = port->stats.receive_status == HAL_OK;
++    if (!port->initialized) port->receiving = false;
++    return port->stats.receive_status;
++}
++}
++HAL_StatusTypeDef USART1_Init(void) { return initialize(&huart1); }
++HAL_StatusTypeDef USART6_Init(void) { return initialize(&huart6); }
++HAL_StatusTypeDef USART_Init(void) {
++    HAL_StatusTypeDef status = USART1_Init();
++    return status == HAL_OK ? USART6_Init() : status;
++}
++HAL_StatusTypeDef USART_Transmit(UART_HandleTypeDef *huart, const uint8_t *data,
++                               uint16_t size, USART_Mode mode, uint32_t timeout_ms) {
++    if (!data || !size || (mode != USART_MODE_BLOCK && mode != USART_MODE_DMA &&
++        mode != USART_MODE_IT)) return HAL_ERROR;
++    if (mode == USART_MODE_BLOCK &&
++        (__get_IPSR() || __get_PRIMASK() || timeout_ms == HAL_MAX_DELAY)) return HAL_ERROR;
++    Port *port = port_for(huart);
++    {
++        BspCritical lock;
++        if (!port || !port->initialized || !hardware_ready(huart)) return HAL_ERROR;
++        if (port->tx_busy || huart->gState != HAL_UART_STATE_READY) return HAL_BUSY;
++        if (mode != USART_MODE_BLOCK &&
++            (size > transfer_capacity || !NVIC_GetEnableIRQ(uart_irq(huart)))) return HAL_ERROR;
++        if (mode == USART_MODE_DMA &&
++            (!dma_ready(huart, false) || !dma_memory(port->tx, size))) return HAL_ERROR;
++        port->tx_busy = true;
++        port->tx_async = mode != USART_MODE_BLOCK;
++        if (mode != USART_MODE_BLOCK) {
++            std::memcpy(port->tx, data, size);
++            HAL_StatusTypeDef status = mode == USART_MODE_DMA
++                ? HAL_UART_Transmit_DMA(huart, port->tx, size)
++                : HAL_UART_Transmit_IT(huart, port->tx, size);
++            if (status != HAL_OK) port->tx_busy = port->tx_async = false;
++            return status;
++        }
++    }
++    // No IRQ masking while waiting: HAL timeout needs TIM6.
++    HAL_StatusTypeDef status = HAL_UART_Transmit(huart, data, size, timeout_ms);
++    {
++        BspCritical lock;
++        port->tx_busy = false;
++    }
++    return status;
++}
++HAL_StatusTypeDef USART_Receive(UART_HandleTypeDef *huart, uint8_t *data, uint16_t size) {
++    if (!dma_memory(data, size) || size > transfer_capacity) return HAL_ERROR;
++    BspCritical lock;
++    Port *port = port_for(huart);
++    if (!port || !port->initialized || !hardware_ready(huart)) return HAL_ERROR;
++    if (port->receiving || huart->RxState != HAL_UART_STATE_READY) return HAL_BUSY;
++    port->rx_buffer = data;
++    port->rx_capacity = size;
++    port->receiving = true;
++    port->stats.receive_status = arm_receive(huart, port);
++    if (port->stats.receive_status != HAL_OK) port->receiving = false;
++    return port->stats.receive_status;
++}
++HAL_StatusTypeDef USART_StopReceive(UART_HandleTypeDef *huart) {
++    // Abort may wait for DMA EN to clear. Never do this in an ISR/critical section.
++    if (__get_IPSR() || __get_PRIMASK()) return HAL_ERROR;
++    Port *port = port_for(huart);
++    {
++        BspCritical lock;
++        if (!port || !port->initialized || !hardware_ready(huart)) return HAL_ERROR;
++        port->receiving = false;
++    }
++    HAL_StatusTypeDef status = HAL_UART_AbortReceive(huart);
++    {
++        BspCritical lock;
++        port->stats.receive_status = status;
++    }
++    return status;
++}
++HAL_StatusTypeDef USART_Service(UART_HandleTypeDef *huart) {
++    if (__get_IPSR() || __get_PRIMASK()) return HAL_ERROR;
++    Port *port = port_for(huart);
++    bool abort_tx;
++    {
++        BspCritical lock;
++        if (!port || !port->initialized || !hardware_ready(huart)) return HAL_ERROR;
++        abort_tx = port->tx_needs_abort;
++    }
++    if (abort_tx) {
++        // A DMA error can restore UART READY while its TX stream is still live.
++        // Keep TX storage reserved until HAL has actually stopped that stream.
++        HAL_StatusTypeDef status = HAL_UART_AbortTransmit(huart);
++        BspCritical lock;
++        if (status != HAL_OK) return status;
++        port->tx_busy = port->tx_async = port->tx_needs_abort = false;
++    }
++    BspCritical lock;
++    if (!port || !port->initialized || !hardware_ready(huart)) return HAL_ERROR;
++    if (!port->receiving) return HAL_OK;
++    if (huart->RxState == HAL_UART_STATE_BUSY_RX) return HAL_OK;
++    if (huart->hdmarx && huart->hdmarx->State == HAL_DMA_STATE_ERROR) return HAL_ERROR;
++    port->stats.receive_status = arm_receive(huart, port);
++    return port->stats.receive_status;
++}
++uint16_t USART_Read(UART_HandleTypeDef *huart, uint8_t *data, uint16_t capacity) {
++    if (!data || !capacity) return 0;
++    BspCritical lock;
++    Port *port = port_for(huart);
++    if (!port || !port->initialized) return 0;
++    uint16_t read = 0;
++    while (read < capacity && read < transfer_capacity && port->tail != port->head) {
++        data[read++] = port->ring[port->tail];
++        port->tail = (port->tail + 1U) % ring_capacity;
++    }
++    return read;
++}
++HAL_StatusTypeDef USART_GetStats(UART_HandleTypeDef *huart, USART_Stats *stats) {
++    if (!stats) return HAL_ERROR;
++    BspCritical lock;
++    Port *port = port_for(huart);
++    if (!port || !port->initialized) return HAL_ERROR;
++    *stats = port->stats;
++    return HAL_OK;
++}
++extern "C" void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
++    BspCritical lock;
++    Port *port = port_for(huart);
++    if (!port || !port->initialized || !port->receiving) return;
++    if (HAL_UARTEx_GetRxEventType(huart) == HAL_UART_RXEVENT_HT) return;
++    if (size > port->rx_capacity) ++port->stats.errors;
++    else {
++        for (uint16_t i = 0; i < size; ++i) {
++            const uint16_t next = (port->head + 1U) % ring_capacity;
++            if (next == port->tail) ++port->stats.dropped_bytes;
++            else {
++                port->ring[port->head] = port->rx_buffer[i];
++                port->head = next;
++                ++port->stats.received_bytes;
++            }
++        }
++    }
++    // Normal DMA stops on IDLE/TC: copy first, then reuse its buffer.
++    port->stats.receive_status = arm_receive(huart, port);
++    if (port->stats.receive_status != HAL_OK) ++port->stats.errors;
++}
++extern "C" void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
++    BspCritical lock;
++    Port *port = port_for(huart);
++    if (port && port->tx_async && !port->tx_needs_abort)
++        port->tx_busy = port->tx_async = false;
++}
++extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
++    BspCritical lock;
++    Port *port = port_for(huart);
++    if (!port || !port->initialized) return;
++    ++port->stats.errors;
++    port->stats.last_error = huart->ErrorCode;
++    port->stats.receive_status = HAL_ERROR;
++    if (port->tx_async && huart->gState == HAL_UART_STATE_READY)
++        port->tx_needs_abort = true;
++    // Retry from USART_Service, after HAL abort/error handling has completed.
+ }
+diff --git a/docs/bsp.md b/docs/bsp.md
+new file mode 100644
+index 0000000..3e5c0be
+--- /dev/null
++++ b/docs/bsp.md
+@@ -0,0 +1,267 @@
++# BSP：CAN、UART、PWM 接入与学习说明
++
++## 本次基线与范围
++
++基于 `hcyhappy/RM_Framework` 的 `main` 提交 `57bb6a19b3b6e63bf3de68fb0c115a1e7c136189`（已合并 ThreadX）。补全 CAN、UART、PWM 的原有接口，并增加接收队列、统计和舵机微秒脉宽接口。
++
++业务层通过 BSP 访问 CAN/UART/PWM。LED 的 HAL GPIO 操作集中到 `modules/src/LED.cpp`，线程改用 LED 接口；IMU 后续可按作业规定在模块中封装 HAL SPI/GPIO。CubeMX 的初始化和 IRQ 转发仍属于板级代码，不需要强行移进 BSP。
++
++原来 BSP 初始化函数返回 void，现在返回 `HAL_StatusTypeDef`。原有调用若忽略返回值仍可编译，但必须逐步改为检查。UART mode 枚举明确采用 `uint8_t` 底层类型；工程源码需整体重新构建，不沿用旧对象文件。
++
++## 启动顺序与边界
++
++`main()` 先执行全部 `MX_*`，随后检查 `bsp_Init()`，最后进入 ThreadX。BSP 不重新调用 `MX_*`：
++
++1. `PWM_Init()` 验证 TIM1/TIM8 初始化；不启动输出。
++2. `USART_Init()` 验证双 UART、DMA 配置和 NVIC，启动内部 Receive-to-Idle Normal DMA 接收。
++3. `CAN_Init()` 完整配置过滤器、启动控制器、启用 FIFO0 消息通知。
++
++初始化失败时启动代码点亮红灯并进入 `Error_Handler()`。初始化可能部分成功，例如 UART1 已启动而 UART6 失败；总返回值失败意味着整体启动未完成，不能继续执行业务。
++
++初始化应在中断允许的主程序阶段完成，不放在 ThreadX 的 `tx_application_define()` 中。CAN 启动与某些 HAL abort 使用毫秒超时；全局关中断时 TIM6 无法推进超时。
++
++不会自动发送 CAN 电流帧或启动 PWM。电机控制模块、PID、IMU 和裁判协议不在本次实现范围。
++
++## 返回值约定
++
++| 返回值 | 含义 | 上层处理 |
++|---|---|---|
++| HAL_OK | 操作被接受/执行成功 | 异步发送还要等待完成 |
++| HAL_BUSY | 正在发送、邮箱满、接收队列空或操作暂不可执行 | 根据业务选择稍后重试或丢弃，不做无限忙等 |
++| HAL_ERROR | 参数错误、未初始化、配置不匹配、bus-off 或 HAL 错误 | 查状态与统计，修正配置或执行恢复 |
++| HAL_TIMEOUT | HAL 阻塞操作超时 | 记录故障并按业务恢复 |
++
++`USART_Read()` 返回读出的字节数，0 表示当前没有可读字节或参数/状态不满足要求。需要区分原因时结合 `USART_GetStats()` 与初始化结果。
++
++## CAN
++
++### 初始化修正
++
++原代码的过滤器结构体未清零，首次配置 CAN1 前没有设置 `SlaveStartFilterBank`。现在使用零初始化，设置分界14后才分别配置 CAN1 bank0、CAN2 bank14。
++
++硬件过滤器接受全部帧，软件仅把标准数据帧送入队列，拒绝扩展帧、远程帧和非法 DLC。后续明确电机/其他设备 ID 后可缩小硬件过滤范围。
++
++本次还同步了 `can.c` 中四个配置赋值：CAN1/2 的 AutoBusOff、AutoRetransmission 均为 ENABLE，与已有 `.ioc` 一致。这是生成配置的同步修正，应用代码仍放 USER CODE 区。以后 Generate Code 后核对这四项。
++
++CAN2 保留对 CAN1 时钟的依赖。CAN1/2 RX0 中断继续由生成的 `stm32f4xx_it.c` 转发给 `HAL_CAN_IRQHandler()`。
++
++### 发送保护
++
++`CAN_Transmit()` 只接受本工程 `&hcan1`、`&hcan2`，同时核对 Instance、时钟、BSP 初始化和 HAL LISTENING 状态。
++
++- ID：0～0x7FF。
++- DLC：0～8。
++- 长度大于0时 data不能为空；允许零长度数据帧。
++- bus-off 返回 HAL_ERROR；无空闲邮箱返回 HAL_BUSY。
++- 先复制到零填充8字节数组，再调用 HAL，避免 HAL 固定读取8字节时越过短数组边界。
++- 邮箱检查和装填在短临界区中完成，防止两个线程竞争同一个空邮箱。
++
++```cpp
++uint8_t payload[3] = {1, 2, 3};
++HAL_StatusTypeDef status = CAN_Transmit(&hcan1, 0x123, payload, sizeof(payload));
++// HAL_OK 表示帧写入邮箱，不代表对端已经接收或应用协议已确认。
++```
++
++CAN 外设会把数据复制到硬件邮箱，所以调用返回后源数组可重用。
++
++### 接收队列
++
++HAL 回调读取 FIFO0，每次最多处理3帧，限制 ISR 的工作量。两个总线分别有16帧软件队列，满时丢弃新帧并增加 dropped，保留尚未消费的数据。
++
++```cpp
++CAN_RxFrame frame;
++while (CAN_Read(&hcan1, &frame) == HAL_OK) {
++    // 按 frame.id 和 frame.length 分发给电机/其他模块。
++    // 例如收到电机反馈后再由模块解析大端整数、编码器和转速。
++}
++```
++
++BSP 不直接调用电机单例，避免底层依赖上层。未来电机线程需要消费两个 CAN 队列，再调用反馈更新逻辑。
++
++CAN_Stats：received 是入队帧数；dropped 包括软件拒绝的帧和软件队列满；errors 是读 FIFO 失败次数。这些计数不能完整代替 CAN 硬件错误诊断，不代表已统计全部总线错误或硬件 FIFO 丢帧。
++
++## UART
++
++### 验证哪些配置
++
++仅支持 `&huart1`、`&huart6`，当前支持8-bit、无校验、TX_RX配置。
++
++| 请求 | Stream | Channel | 方向 |
++|---|---|---|---|
++| USART1 RX | DMA2 Stream2 | 4 | 外设→内存 |
++| USART1 TX | DMA2 Stream7 | 4 | 内存→外设 |
++| USART6 RX | DMA2 Stream1 | 5 | 外设→内存 |
++| USART6 TX | DMA2 Stream6 | 5 | 内存→外设 |
++
++检查 DMA 句柄是否链接到正确 UART，Normal、Byte、MemInc、PeriphInc 等参数，以及对应 UART/DMA NVIC 是否启用。DMA RX 地址须位于普通 SRAM 的 `0x20000000..0x2001FFFF`，整个缓冲区都必须落在范围内。CCM、FLASH 均不作为 DMA RX 缓冲区。
++
++不自动修改错误配置再继续，而是返回错误，便于发现 `.ioc` 或生成代码的问题。
++
++### 三种发送方式
++
++```cpp
++const uint8_t text[] = {'O', 'K', '\r', '\n'};
++HAL_StatusTypeDef status = USART_Transmit(&huart1, text, sizeof(text), USART_MODE_DMA);
++```
++
++| 模式 | 大小限制 | 生命周期与行为 |
++|---|---:|---|
++| BLOCK | 1～65535字节 | HAL 阻塞发送，默认100ms超时；源数据在调用结束前有效 |
++| DMA | 1～256字节 | 复制到BSP内部缓冲区后启动DMA；返回后调用方可重用源数据 |
++| IT | 1～256字节 | 同样先复制，然后使用UART中断发送 |
++
++每个 UART 同时只接受一笔发送，没有隐藏发送队列。正在发送时返回 HAL_BUSY，不能覆盖内部缓存。两个 UART 分别管理自己的状态。
++
++阻塞发送不允许在 ISR、全局关中断或 HAL_MAX_DELAY 无限超时条件下执行。线程中它仍会占用执行时间，优先使用 DMA/IT；超时按数据长度和波特率选择。
++
++DMA 完成不一定表示最后停止位已发完：HAL 在 DMA 搬运完成后使用 UART TC 中断收尾。实际 UART handler 已由 `threadx_port.c` 提供，最终 `HAL_UART_TxCpltCallback()` 释放 BSP 发送占用。不能删除 UART NVIC 只保留 DMA IRQ。
++
++### Normal DMA + Idle 接收
++
++每个串口默认提供256字节 DMA 工作缓冲区和512字节环形数组，其中可存511字节。
++
++1. `HAL_UARTEx_ReceiveToIdle_DMA()` 启动接收。
++2. 关闭 DMA HT 中断，避免把半包和后续完整事件重复入队；回调仍显式忽略 HT。
++3. 出现 IDLE 或满缓冲区 TC 时，HAL 停止本轮 Normal DMA。
++4. BSP 将本轮字节复制到环形队列。
++5. 再次启动 Receive-to-Idle，恢复接收。
++
++```cpp
++uint8_t bytes[128];
++// 在负责接收的线程循环里定期执行，不放进阻塞式ISR。
++HAL_StatusTypeDef recovery = USART_Service(&huart1);
++uint16_t count = USART_Read(&huart1, bytes, sizeof(bytes));
++// 把 count 字节送入上层协议解析器。
++```
++
++`USART_Read()` 一次最多取256字节，限制关中断时间；有更多数据可再调用。队列满时丢弃新字节，增加 dropped_bytes。
++
++**这是字节流接口，不是协议包接口。** IDLE不保证完整包；长包可以在TC处分段，多个包也可能出现在同一次回调。上层要处理帧头、长度、校验、拆包和粘包。
++
++Normal DMA 在重启接收时有短暂间隙，不能保证连续高速输入完全无丢失。后续确有吞吐需求时，应改为 Circular DMA+读写索引或双缓冲，并同步调整配置与实现；不能直接只把 `.ioc` 改成Circular，本封装会拒绝这种配置。
++
++### 错误和恢复
++
++UART 错误回调记录错误次数、ErrorCode和接收状态。HAL abort/错误路径完成后，由接收线程周期调用 `USART_Service()` 尝试重新装填。回调内不调用可能阻塞的 HAL abort。
++
++HAL的DMA错误路径可能先把UART发送状态设为READY，而TX DMA流仍需停止。BSP不会立刻释放发送缓冲区：保留占用，Service在线程中完成AbortTransmit后才允许下一笔发送；期间到来的旧完成回调也不能提前释放缓存。该异常路径已加入模拟测试。
++
++应用目前只有演示线程，没有真正的串口消费者；启用接收后若不消费数据，队列最终会满，这是预期的可观测结果。后续接收线程同时负责读队列和定期Service。
++
++若接收已经停止，Service不会自动违背Stop指令恢复。DMA处于ERROR等无法正常启动的异常状态会返回错误，需由上层安排停止和重新初始化/复位，不能靠反复忙等掩盖。
++
++### 可选自定义接收缓冲区
++
++通常不需要调用 `USART_Receive()`，默认内部缓冲区已经启动。需要自定义时，先检查 `USART_StopReceive()` 成功，再调用 `USART_Receive()`：
++
++```cpp
++static uint8_t custom_rx[128]; // 需由链接脚本放在普通SRAM
++if (USART_StopReceive(&huart1) == HAL_OK) {
++    HAL_StatusTypeDef status = USART_Receive(&huart1, custom_rx, sizeof(custom_rx));
++}
++```
++
++缓冲区必须保持有效直到成功停止；不能用即将退出的局部数组。BSP会反复重用该缓冲区，应用应从USART_Read读取副本，不在DMA写入时修改/解析工作缓冲区。
++
++RX 的初始化、Stop、Receive和Service由同一个线程负责。短临界区保护队列和发送状态，**不代替跨线程的整个“停止→换缓冲区→重启”事务锁**。运行期不要绕过BSP直接调用HAL收发/DeInit。
++
++## PWM
++
++### 范围和初始化
++
++支持TIM1 CH1～4、TIM8 CH1～3。其他句柄、TIM8 CH4和非法通道被拒绝；HAL句柄、定时器时钟和BSP初始化必须有效。
++
++`PWM_Init()`只验证，不启动；初始Pulse=0保持配置原状。应用明确设定脉宽后才启动。
++
++```cpp
++if (PWM_SetPulseUs(&htim1, 1500.0f, TIM_CHANNEL_1) == HAL_OK) {
++    HAL_StatusTypeDef status = PWM_Start(&htim1, TIM_CHANNEL_1);
++}
++```
++
++这只是接口示例，不会自动执行。舵机中位、端点和接口接线仍按实际型号核对。
++
++### 周期、占空比和微秒
++
++TIM1/TIM8 在APB2；当前PCLK2=84MHz，APB2分频不为1，所以定时器时钟为168MHz。读取当前时钟和PSC，而不是把CPU频率直接当定时器频率。
++
++```text
++计数频率 = TIMCLK/(PSC+1)
++计数周期数 = round(目标秒数 × 计数频率)
++ARR = 周期数-1
++CCR = round(占空比 × 周期数)
++CCR = round(脉宽微秒 × 计数频率 / 1000000)
++```
++
++当前PSC167，一个计数1µs；ARR19999为20ms；CCR1500为1.5ms。
++
++| API | 参数单位/范围 |
++|---|---|
++| PWM_SetPeriod | 秒；2～65535个计数 |
++| PWM_SetDutyRatio | 0～1，包含两个端点 |
++| PWM_SetPulseUs | 微秒；不超过当前周期 |
++
++拒绝负数、NaN、Infinity和超出范围的值，不悄悄截断。
++
++TIM1/TIM8为16-bit：本封装把周期数上限设为65535，保留 `CCR=周期数` 表达100%占空比的能力。如果允许ARR65535，周期数65536，100%对应CCR65536会超出16-bit。
++
++### 改周期的限制
++
++一个定时器所有通道共用PSC/ARR。任意通道仍在运行时 `PWM_SetPeriod()` 返回 HAL_BUSY；需先停止该定时器所有使用通道。
++
++改变周期时会按新旧周期比例缩放各通道CCR，尽量保持占空比；停止状态下通过更新事件装载影子寄存器并清除更新标志。**保持占空比会改变舵机脉宽**，所以改周期后需要重新调用SetPulseUs设定目标脉宽。
++
++启动检查HAL通道状态，重复启动返回HAL_BUSY；停止已经停止的通道返回HAL_OK。停止一个通道时，其他已经运行的通道应继续运行，此行为已在模拟测试中覆盖，真实波形仍需上板核对。
++
++## 并发与ISR
++
++`bsp_critical.hpp` 保存/恢复PRIMASK，而不是无条件开中断；嵌套时保持原有屏蔽状态。它只包住有界的寄存器操作、缓冲区复制和队列状态变化。
++
++阻塞UART发送、CAN启动和UART停止放在中断允许的线程/主程序上下文，不在短临界区中执行。CAN接收最多3帧，UART搬运最多256字节，避免ISR无限循环。
++
++这些措施不保证任意应用负载都满足实时性；上板后需测量ISR时间、总线吞吐和消费线程周期。队列解决数据转交，不自动实现协议和任务调度。
++
++## 本机验证与硬件待办
++
++执行记录见 `docs/logs.md`。
++
++```powershell
++cd board
++cmake --preset Debug
++cmake --build --preset Debug
++```
++
++主机模拟测试是可选的Linux x86-64检查，不能在MCU上运行，也不要求Windows用户先安装它：
++
++```bash
++bash tests/bsp/run.sh
++```
++
++测试替换HAL和寄存器，并将测试BSS映射到STM32普通SRAM数值区间，以执行真实的DMA地址范围检查。使用UBSan；不模拟电气、真实DMA、抢占时序或CAN ACK。
++
++覆盖：初始化前拒绝调用、错误句柄、DMA映射/NVIC、过滤器字段、CAN短缓冲区/ID/DLC/邮箱/队列、UART缓存复制/忙状态/半传输/重装填/环形溢出/错误重试、PWM非法浮点/周期/通道/多通道启停、PRIMASK恢复。
++
++目前按用户要求不执行上板测试。后续需要：双CAN真实收发、UART长流量和错误恢复、PWM示波器测量、线程消费队列、接收间隙评估。
++
++## 应用补丁
++
++压缩包中的 `bsp-completion.patch` 相对于上述main基线生成。先解压，把patch放到包含 `board/`、`bsp/` 的工程根目录，然后在该目录：
++
++```powershell
++git status
++git apply --check .\bsp-completion.patch
++git apply .\bsp-completion.patch
++cd board
++cmake --preset Debug
++cmake --build --preset Debug
++```
++
++若check失败，先核对分支和本地未提交改动，不强行覆盖。无需重复应用ThreadX旧补丁，也无需再次调整时钟树。
++
++可选提交句子：
++
++```text
++feat(bsp): complete CAN, UART DMA and PWM wrappers with initialization guards
++```
++
++本次没有替你向GitHub推送。确认本机编译后，再按已有流程commit/push。
+diff --git a/docs/logs.md b/docs/logs.md
+index 17e4493..318766b 100644
+--- a/docs/logs.md
++++ b/docs/logs.md
+@@ -8,3 +8,18 @@
+ - 默认 Debug：FLASH 33908 B；常规 SRAM 27784 B（含 8 KiB heap、8 KiB MSP 和静态线程池），CCM 0 B。Release：FLASH 18708 B。
+ - 检查 ELF 向量：PendSV、SysTick、TIM6、USART1、USART6 均指向预期实现；链接脚本 heap/stack 预留确认为各 8192 B。
+ - 未执行 CubeMX 实际重新生成，也未上板；线程切换、LED 灯效、tick 增量和故障监控均待硬件验证。
++
++## 2026-10-09：BSP CAN/UART/PWM
++
++- 基线：main 57bb6a19b3b6e63bf3de68fb0c115a1e7c136189，已合并 ThreadX。
++- 补全带返回状态的 CAN/UART/PWM 封装；MX 初始化后检查 bsp_Init，再进入内核。CAN 无自动电流命令，PWM 不自动启动。
++- CAN 过滤器在两次配置前均设置 SlaveStartFilterBank=14；增加标准帧校验、16帧/总线接收队列、邮箱与 bus-off 检查。
++- 同步 can.c 的 AutoBusOff/AutoRetransmission 为 ENABLE，与原有 ioc 一致。
++- UART 验证句柄、DMA 映射和 NVIC；复制异步 TX 数据；Normal DMA idle/TC 复制到511字节队列后重装填。错误恢复由 USART_Service 在线程中执行，发送异常时保留缓冲区直到 DMA 中止完成。
++- PWM 支持 TIM1 CH1~4、TIM8 CH1~3；校验周期、占空比与脉宽，禁止运行时改共享周期。
++- LED GPIO 调用集中到 modules/src/LED.cpp；线程不直接调用外设 HAL。
++- Arm GNU 13.2.1：board Debug/Release、根 Debug（heartbeat demo OFF）构建成功；最终三个构建日志未见 warning/error。
++- 默认 Debug FLASH 40020 B，普通 SRAM 30472 B（含预留），CCM 0 B；Release FLASH 21856 B；根 Debug FLASH 38876 B、SRAM 30288 B。
++- 直接读取 ELF 向量表，核对 PendSV、SysTick、TIM6、CAN1/2 RX0、USART1/6、DMA2 Stream1/2/6/7 共11个入口，均匹配实际符号。
++- Linux x86-64 HAL 模拟测试（UBSan）通过：未初始化、错误参数/映射/NVIC、CAN队列、UART复制/重装填/溢出/错误恢复、PWM边界和多通道、PRIMASK恢复。
++- 按用户要求跳过硬件测试。未运行 CubeMX GUI 重新生成；Normal DMA 连续流量丢失窗口、电气与真实并发时序仍需上板验证。
+diff --git a/docs/threadx.md b/docs/threadx.md
+index 967afc8..4f544d6 100644
+--- a/docs/threadx.md
++++ b/docs/threadx.md
+@@ -10,12 +10,12 @@
+ - `threads/src/app_threadx.cpp`：调用 tx_kernel_enter，在 tx_application_define 中分配内存、创建信号量及线程。
+ - `threads/src/alivethread.cpp`：等待演示心跳，通过绿色 LED 反映存活，超时亮红灯。
+ - `main.c`：只在 USER CODE 区调用应用入口。
+-- 修正 UART NVIC，使 USART1/6 和 DMA 中断可以配合工作。未启动 DMA 接收，BSP TODO 后续实现。
++- 修正 UART NVIC，使 USART1/6 和 DMA 中断可以配合工作。后续 BSP 接入已启动双串口 DMA 接收，详见 docs/bsp.md。
+ - 将原 BMI088 中未配置的 htim10 引用置于默认关闭的加热开关，允许框架编译；未补完 IMU、PID 或电机功能。
+ 
+ ## 启动顺序与时基
+ 
+-启动文件初始化数据、BSS 和 C++ 静态对象 → main → HAL_Init（TIM6 开始计时）→ SystemClock_Config（TIM6 随时钟重配）→ 外设初始化 → app_threadx_start → tx_kernel_enter → _tx_initialize_low_level → tx_application_define → ThreadX 调度。
++启动文件初始化数据、BSS 和 C++ 静态对象 → main → HAL_Init（TIM6 开始计时）→ SystemClock_Config（TIM6 随时钟重配）→ 外设初始化 → bsp_Init → app_threadx_start → tx_kernel_enter → _tx_initialize_low_level → tx_application_define → ThreadX 调度。
+ 
+ HAL 的 uwTick 来自 TIM6，每毫秒增加一次；ThreadX 的 tx_time_get 来自 SysTick，每毫秒一个 tick。现在 tx_thread_sleep(200) 是约 200 ms。同步测试不要在 ISR 或 tx_application_define 中调用 HAL_Delay；内核初始化期间全局中断关闭。
+ 
+diff --git a/modules/include/LED.hpp b/modules/include/LED.hpp
+new file mode 100644
+index 0000000..801bba0
+--- /dev/null
++++ b/modules/include/LED.hpp
+@@ -0,0 +1,8 @@
++#ifndef RM_LED_HPP
++#define RM_LED_HPP
++namespace LED {
++enum class Color { Blue, Green, Red };
++void Set(Color color, bool on);
++void Toggle(Color color);
++}
++#endif
+diff --git a/modules/src/LED.cpp b/modules/src/LED.cpp
+new file mode 100644
+index 0000000..01a85f1
+--- /dev/null
++++ b/modules/src/LED.cpp
+@@ -0,0 +1,22 @@
++#include "LED.hpp"
++#include "main.h"
++
++namespace {
++uint16_t pin_for(LED::Color color) {
++    switch (color) {
++    case LED::Color::Blue: return LED_B_Pin;
++    case LED::Color::Green: return LED_G_Pin;
++    case LED::Color::Red: return LED_R_Pin;
++    }
++    return 0;
++}
++}
++void LED::Set(Color color, bool on) {
++    const uint16_t pin = pin_for(color);
++    if (pin && __HAL_RCC_GPIOH_IS_CLK_ENABLED())
++        HAL_GPIO_WritePin(GPIOH, pin, on ? GPIO_PIN_RESET : GPIO_PIN_SET);
++}
++void LED::Toggle(Color color) {
++    const uint16_t pin = pin_for(color);
++    if (pin && __HAL_RCC_GPIOH_IS_CLK_ENABLED()) HAL_GPIO_TogglePin(GPIOH, pin);
++}
+diff --git a/tests/bsp/hal_stub/can.h b/tests/bsp/hal_stub/can.h
+new file mode 100644
+index 0000000..c82df86
+--- /dev/null
++++ b/tests/bsp/hal_stub/can.h
+@@ -0,0 +1,2 @@
++#pragma once
++#include "main.h"
+diff --git a/tests/bsp/hal_stub/main.h b/tests/bsp/hal_stub/main.h
+new file mode 100644
+index 0000000..5f9f606
+--- /dev/null
++++ b/tests/bsp/hal_stub/main.h
+@@ -0,0 +1,107 @@
++#pragma once
++#include <cstdint>
++using IRQn_Type = int;
++enum HAL_StatusTypeDef { HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT };
++enum { HAL_CAN_STATE_RESET, HAL_CAN_STATE_READY, HAL_CAN_STATE_LISTENING };
++enum { HAL_UART_STATE_RESET, HAL_UART_STATE_READY, HAL_UART_STATE_BUSY_TX, HAL_UART_STATE_BUSY_RX, HAL_UART_STATE_ERROR };
++enum { HAL_DMA_STATE_RESET, HAL_DMA_STATE_READY, HAL_DMA_STATE_BUSY, HAL_DMA_STATE_ERROR };
++enum { HAL_TIM_STATE_RESET, HAL_TIM_STATE_READY };
++enum { HAL_TIM_CHANNEL_STATE_RESET, HAL_TIM_CHANNEL_STATE_READY, HAL_TIM_CHANNEL_STATE_BUSY };
++enum { USART1_IRQn, USART6_IRQn, DMA2_Stream1_IRQn, DMA2_Stream2_IRQn, DMA2_Stream6_IRQn, DMA2_Stream7_IRQn, CAN1_RX0_IRQn, CAN2_RX0_IRQn };
++constexpr uint32_t ENABLE=1, CAN_FILTERMODE_IDMASK=0, CAN_FILTERSCALE_32BIT=1, CAN_RX_FIFO0=0;
++constexpr uint32_t CAN_IT_RX_FIFO0_MSG_PENDING=1, CAN_ID_STD=0, CAN_RTR_DATA=0, CAN_ESR_BOFF=4;
++constexpr uint32_t UART_WORDLENGTH_8B=0, UART_PARITY_NONE=0, UART_MODE_TX_RX=3, HAL_MAX_DELAY=0xffffffff;
++constexpr uint32_t DMA_CHANNEL_4=4, DMA_CHANNEL_5=5, DMA_PERIPH_TO_MEMORY=0, DMA_MEMORY_TO_PERIPH=1;
++constexpr uint32_t DMA_NORMAL=0, DMA_PINC_DISABLE=0, DMA_MINC_ENABLE=1, DMA_PDATAALIGN_BYTE=0, DMA_MDATAALIGN_BYTE=0, DMA_IT_HT=4;
++constexpr uint32_t HAL_UART_RXEVENT_HT=0, HAL_UART_RXEVENT_TC=1, HAL_UART_RXEVENT_IDLE=2;
++constexpr uint32_t TIM_CHANNEL_1=0, TIM_CHANNEL_2=4, TIM_CHANNEL_3=8, TIM_CHANNEL_4=12;
++constexpr uint32_t TIM_COUNTERMODE_UP=0, RCC_HCLK_DIV1=1, TIM_CR1_CEN=1, TIM_EGR_UG=1, TIM_FLAG_UPDATE=1;
++struct CAN_TypeDef { uint32_t ESR; };
++struct USART_TypeDef {};
++struct DMA_Stream_TypeDef {};
++struct TIM_TypeDef { uint32_t PSC, ARR, CR1, EGR, CNT, CCR[4]; };
++extern CAN_TypeDef can_regs[2];
++extern USART_TypeDef uart_regs[2];
++extern DMA_Stream_TypeDef dma_regs[4];
++extern TIM_TypeDef tim_regs[2];
++#define CAN1 (&can_regs[0])
++#define CAN2 (&can_regs[1])
++#define USART1 (&uart_regs[0])
++#define USART6 (&uart_regs[1])
++#define DMA2_Stream2 (&dma_regs[0])
++#define DMA2_Stream7 (&dma_regs[1])
++#define DMA2_Stream1 (&dma_regs[2])
++#define DMA2_Stream6 (&dma_regs[3])
++#define TIM1 (&tim_regs[0])
++#define TIM8 (&tim_regs[1])
++struct CAN_HandleTypeDef { CAN_TypeDef *Instance; int State; };
++struct CAN_FilterTypeDef {
++    uint32_t FilterIdHigh, FilterIdLow, FilterMaskIdHigh, FilterMaskIdLow;
++    uint32_t FilterFIFOAssignment, FilterBank, FilterMode, FilterScale, FilterActivation, SlaveStartFilterBank;
++};
++struct CAN_TxHeaderTypeDef { uint32_t StdId, ExtId, IDE, RTR, DLC, TransmitGlobalTime; };
++struct CAN_RxHeaderTypeDef { uint32_t StdId, IDE, RTR, DLC; };
++struct DMA_InitTypeDef { uint32_t Channel, Direction, Mode, PeriphInc, MemInc, PeriphDataAlignment, MemDataAlignment; };
++struct DMA_HandleTypeDef { DMA_Stream_TypeDef *Instance; void *Parent; int State; DMA_InitTypeDef Init; };
++struct UART_InitTypeDef { uint32_t WordLength, Parity, Mode; };
++struct UART_HandleTypeDef {
++    USART_TypeDef *Instance; int gState, RxState; UART_InitTypeDef Init;
++    DMA_HandleTypeDef *hdmarx, *hdmatx;
++    uint32_t ErrorCode, RxEventType;
++    uint8_t *rx; const uint8_t *tx; uint16_t rx_size, tx_size;
++};
++struct TIM_InitTypeDef { uint32_t CounterMode, Period; };
++struct TIM_HandleTypeDef { TIM_TypeDef *Instance; int State; TIM_InitTypeDef Init; int channels[4]; };
++struct RCC_ClkInitTypeDef { uint32_t APB2CLKDivider; };
++extern CAN_HandleTypeDef hcan1, hcan2;
++extern UART_HandleTypeDef huart1, huart6;
++extern TIM_HandleTypeDef htim1, htim8;
++extern DMA_HandleTypeDef mock_dma[4];
++extern bool clocks[7], enabled[8];
++extern uint32_t primask, ipsr;
++inline uint32_t __get_PRIMASK() { return primask; }
++inline uint32_t __get_IPSR() { return ipsr; }
++inline void __disable_irq() { primask=1; }
++inline void __set_PRIMASK(uint32_t n) { primask=n; }
++inline bool NVIC_GetEnableIRQ(int n) { return enabled[n]; }
++#define __HAL_RCC_CAN1_IS_CLK_ENABLED() clocks[0]
++#define __HAL_RCC_CAN2_IS_CLK_ENABLED() clocks[1]
++#define __HAL_RCC_USART1_IS_CLK_ENABLED() clocks[2]
++#define __HAL_RCC_USART6_IS_CLK_ENABLED() clocks[3]
++#define __HAL_RCC_DMA2_IS_CLK_ENABLED() clocks[4]
++#define __HAL_RCC_TIM1_IS_CLK_ENABLED() clocks[5]
++#define __HAL_RCC_TIM8_IS_CLK_ENABLED() clocks[6]
++#define __HAL_DMA_DISABLE_IT(dma, irq) ((void)(dma), (void)(irq))
++#define __HAL_TIM_GET_AUTORELOAD(t) ((t)->Instance->ARR)
++#define __HAL_TIM_SET_AUTORELOAD(t,v) ((t)->Instance->ARR=(v))
++#define __HAL_TIM_GET_COMPARE(t,c) ((t)->Instance->CCR[(c)/4])
++#define __HAL_TIM_SET_COMPARE(t,c,v) ((t)->Instance->CCR[(c)/4]=(v))
++#define __HAL_TIM_SET_COUNTER(t,v) ((t)->Instance->CNT=(v))
++#define __HAL_TIM_CLEAR_FLAG(t,f) ((void)(t), (void)(f))
++extern "C" {
++int HAL_CAN_GetState(CAN_HandleTypeDef *);
++HAL_StatusTypeDef HAL_CAN_ConfigFilter(CAN_HandleTypeDef *, const CAN_FilterTypeDef *);
++HAL_StatusTypeDef HAL_CAN_Start(CAN_HandleTypeDef *);
++HAL_StatusTypeDef HAL_CAN_Stop(CAN_HandleTypeDef *);
++HAL_StatusTypeDef HAL_CAN_ActivateNotification(CAN_HandleTypeDef *, uint32_t);
++uint32_t HAL_CAN_GetTxMailboxesFreeLevel(CAN_HandleTypeDef *);
++HAL_StatusTypeDef HAL_CAN_AddTxMessage(CAN_HandleTypeDef *, const CAN_TxHeaderTypeDef *, const uint8_t *, uint32_t *);
++uint32_t HAL_CAN_GetRxFifoFillLevel(CAN_HandleTypeDef *, uint32_t);
++HAL_StatusTypeDef HAL_CAN_GetRxMessage(CAN_HandleTypeDef *, uint32_t, CAN_RxHeaderTypeDef *, uint8_t *);
++HAL_StatusTypeDef HAL_UARTEx_ReceiveToIdle_DMA(UART_HandleTypeDef *, uint8_t *, uint16_t);
++HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *, const uint8_t *, uint16_t);
++HAL_StatusTypeDef HAL_UART_Transmit_IT(UART_HandleTypeDef *, const uint8_t *, uint16_t);
++HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *, const uint8_t *, uint16_t, uint32_t);
++HAL_StatusTypeDef HAL_UART_AbortReceive(UART_HandleTypeDef *);
++HAL_StatusTypeDef HAL_UART_AbortTransmit(UART_HandleTypeDef *);
++uint32_t HAL_UARTEx_GetRxEventType(UART_HandleTypeDef *);
++void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *);
++void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *, uint16_t);
++void HAL_UART_TxCpltCallback(UART_HandleTypeDef *);
++void HAL_UART_ErrorCallback(UART_HandleTypeDef *);
++void HAL_RCC_GetClockConfig(RCC_ClkInitTypeDef *, uint32_t *);
++uint32_t HAL_RCC_GetPCLK2Freq();
++int HAL_TIM_GetChannelState(TIM_HandleTypeDef *, uint32_t);
++HAL_StatusTypeDef HAL_TIM_PWM_Start(TIM_HandleTypeDef *, uint32_t);
++HAL_StatusTypeDef HAL_TIM_PWM_Stop(TIM_HandleTypeDef *, uint32_t);
++}
+diff --git a/tests/bsp/hal_stub/tim.h b/tests/bsp/hal_stub/tim.h
+new file mode 100644
+index 0000000..c82df86
+--- /dev/null
++++ b/tests/bsp/hal_stub/tim.h
+@@ -0,0 +1,2 @@
++#pragma once
++#include "main.h"
+diff --git a/tests/bsp/hal_stub/usart.h b/tests/bsp/hal_stub/usart.h
+new file mode 100644
+index 0000000..c82df86
+--- /dev/null
++++ b/tests/bsp/hal_stub/usart.h
+@@ -0,0 +1,2 @@
++#pragma once
++#include "main.h"
+diff --git a/tests/bsp/run.sh b/tests/bsp/run.sh
+new file mode 100644
+index 0000000..8548643
+--- /dev/null
++++ b/tests/bsp/run.sh
+@@ -0,0 +1,10 @@
++#!/usr/bin/env bash
++set -eu
++cd "$(dirname "$0")/../.."
++mkdir -p build/bsp-tests
++# Linux x86-64: place .bss in STM32 SRAM range to test the real DMA memory guard.
++g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-pie -no-pie \
++    -Wl,--section-start=.bss=0x20001000 -Itests/bsp/hal_stub -Ibsp/include \
++    tests/bsp/test_bsp.cpp bsp/src/bsp.cpp bsp/src/bsp_can.cpp \
++    bsp/src/bsp_usart.cpp bsp/src/bsp_pwm.cpp -o build/bsp-tests/test_bsp
++build/bsp-tests/test_bsp
+diff --git a/tests/bsp/test_bsp.cpp b/tests/bsp/test_bsp.cpp
+new file mode 100644
+index 0000000..0fdcd5a
+--- /dev/null
++++ b/tests/bsp/test_bsp.cpp
+@@ -0,0 +1,210 @@
++#include "bsp.hpp"
++#include "bsp_can.hpp"
++#include "bsp_usart.hpp"
++#include "bsp_pwm.hpp"
++#include <cassert>
++#include <cstring>
++#include <cstdio>
++#include <limits>
++#include <initializer_list>
++CAN_TypeDef can_regs[2]{};
++USART_TypeDef uart_regs[2]{};
++DMA_Stream_TypeDef dma_regs[4]{};
++TIM_TypeDef tim_regs[2]{};
++CAN_HandleTypeDef hcan1{}, hcan2{};
++UART_HandleTypeDef huart1{}, huart6{};
++TIM_HandleTypeDef htim1{}, htim8{};
++DMA_HandleTypeDef mock_dma[4]{};
++bool clocks[7]{}, enabled[8]{};
++uint32_t primask=0, ipsr=0;
++CAN_FilterTypeDef filters[2]{};
++CAN_TxHeaderTypeDef sent_header{};
++uint8_t sent_payload[8]{};
++uint32_t mailbox_free=3, rx_pending=0, config_calls=0;
++CAN_RxHeaderTypeDef incoming{};
++HAL_StatusTypeDef rx_result=HAL_OK, tx_result=HAL_OK, filter_result=HAL_OK;
++unsigned rx_calls=0, tx_calls=0;
++int HAL_CAN_GetState(CAN_HandleTypeDef *h) { return h->State; }
++HAL_StatusTypeDef HAL_CAN_ConfigFilter(CAN_HandleTypeDef *h, const CAN_FilterTypeDef *f) {
++    ++config_calls; filters[h==&hcan1?0:1]=*f; return filter_result;
++}
++HAL_StatusTypeDef HAL_CAN_Start(CAN_HandleTypeDef *h) {
++    assert(!primask); h->State=HAL_CAN_STATE_LISTENING; return HAL_OK;
++}
++HAL_StatusTypeDef HAL_CAN_Stop(CAN_HandleTypeDef *h) { h->State=HAL_CAN_STATE_READY; return HAL_OK; }
++HAL_StatusTypeDef HAL_CAN_ActivateNotification(CAN_HandleTypeDef *, uint32_t) { return HAL_OK; }
++uint32_t HAL_CAN_GetTxMailboxesFreeLevel(CAN_HandleTypeDef *) { return mailbox_free; }
++HAL_StatusTypeDef HAL_CAN_AddTxMessage(CAN_HandleTypeDef *, const CAN_TxHeaderTypeDef *h,
++                                     const uint8_t *d, uint32_t *m) {
++    ++tx_calls; sent_header=*h; std::memcpy(sent_payload,d,8); *m=1; return HAL_OK;
++}
++uint32_t HAL_CAN_GetRxFifoFillLevel(CAN_HandleTypeDef *, uint32_t) { return rx_pending; }
++HAL_StatusTypeDef HAL_CAN_GetRxMessage(CAN_HandleTypeDef *, uint32_t, CAN_RxHeaderTypeDef *h, uint8_t *d) {
++    --rx_pending; *h=incoming; std::memset(d,0x42,8); return HAL_OK;
++}
++HAL_StatusTypeDef HAL_UARTEx_ReceiveToIdle_DMA(UART_HandleTypeDef *h, uint8_t *d, uint16_t n) {
++    ++rx_calls;
++    if (h->RxState!=HAL_UART_STATE_READY) return HAL_BUSY;
++    if (rx_result!=HAL_OK) return rx_result;
++    h->rx=d; h->rx_size=n; h->RxState=HAL_UART_STATE_BUSY_RX;
++    h->hdmarx->State=HAL_DMA_STATE_BUSY; return HAL_OK;
++}
++HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, const uint8_t *d, uint16_t n) {
++    if(tx_result!=HAL_OK) return tx_result;
++    h->tx=d; h->tx_size=n; h->gState=HAL_UART_STATE_BUSY_TX; return HAL_OK;
++}
++HAL_StatusTypeDef HAL_UART_Transmit_IT(UART_HandleTypeDef *h, const uint8_t *d, uint16_t n) {
++    return HAL_UART_Transmit_DMA(h,d,n);
++}
++HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *, const uint8_t *, uint16_t, uint32_t) {
++    assert(!primask); return tx_result;
++}
++HAL_StatusTypeDef HAL_UART_AbortReceive(UART_HandleTypeDef *h) {
++    assert(!primask); h->RxState=HAL_UART_STATE_READY; h->hdmarx->State=HAL_DMA_STATE_READY; return HAL_OK;
++}
++HAL_StatusTypeDef HAL_UART_AbortTransmit(UART_HandleTypeDef *h) {
++    assert(!primask); h->gState=HAL_UART_STATE_READY; h->hdmatx->State=HAL_DMA_STATE_READY; return HAL_OK;
++}
++uint32_t HAL_UARTEx_GetRxEventType(UART_HandleTypeDef *h) { return h->RxEventType; }
++void HAL_RCC_GetClockConfig(RCC_ClkInitTypeDef *c, uint32_t *l) { c->APB2CLKDivider=2; *l=5; }
++uint32_t HAL_RCC_GetPCLK2Freq() { return 84000000; }
++int HAL_TIM_GetChannelState(TIM_HandleTypeDef *h, uint32_t c) { return h->channels[c/4]; }
++HAL_StatusTypeDef HAL_TIM_PWM_Start(TIM_HandleTypeDef *h, uint32_t c) {
++    h->channels[c/4]=HAL_TIM_CHANNEL_STATE_BUSY; h->Instance->CR1|=TIM_CR1_CEN; return HAL_OK;
++}
++HAL_StatusTypeDef HAL_TIM_PWM_Stop(TIM_HandleTypeDef *h, uint32_t c) {
++    h->channels[c/4]=HAL_TIM_CHANNEL_STATE_READY;
++    bool any=false; for(int s:h->channels) any|=s==HAL_TIM_CHANNEL_STATE_BUSY;
++    if(!any) h->Instance->CR1&=~TIM_CR1_CEN;
++    return HAL_OK;
++}
++void setup() {
++    for(auto &c:clocks) c=true;
++    for(auto &e:enabled) e=true;
++    hcan1={CAN1,HAL_CAN_STATE_READY}; hcan2={CAN2,HAL_CAN_STATE_READY};
++    huart1.Instance=USART1; huart6.Instance=USART6;
++    UART_HandleTypeDef *ports[]={&huart1,&huart6};
++    for(unsigned i=0;i<2;++i) {
++        auto *h=ports[i]; h->gState=h->RxState=HAL_UART_STATE_READY;
++        h->Init={UART_WORDLENGTH_8B,UART_PARITY_NONE,UART_MODE_TX_RX};
++        for(unsigned j=0;j<2;++j) {
++            auto &d=mock_dma[i*2+j]; d.Instance=&dma_regs[i*2+j]; d.Parent=h;
++            d.State=HAL_DMA_STATE_READY;
++            d.Init={i==0?DMA_CHANNEL_4:DMA_CHANNEL_5,j==0?DMA_PERIPH_TO_MEMORY:DMA_MEMORY_TO_PERIPH,
++                    DMA_NORMAL,DMA_PINC_DISABLE,DMA_MINC_ENABLE,DMA_PDATAALIGN_BYTE,DMA_MDATAALIGN_BYTE};
++        }
++        h->hdmarx=&mock_dma[i*2]; h->hdmatx=&mock_dma[i*2+1];
++    }
++    htim1.Instance=TIM1; htim8.Instance=TIM8;
++    for(auto *h:{&htim1,&htim8}) {
++        h->State=HAL_TIM_STATE_READY; h->Init={TIM_COUNTERMODE_UP,19999};
++        h->Instance->PSC=167; h->Instance->ARR=19999;
++        for(auto &c:h->channels) c=HAL_TIM_CHANNEL_STATE_READY;
++    }
++}
++void inject_uart(UART_HandleTypeDef *h,uint16_t n,uint8_t value,uint32_t event=HAL_UART_RXEVENT_IDLE) {
++    std::memset(h->rx,value,n); h->RxEventType=event;
++    if(event!=HAL_UART_RXEVENT_HT) {
++        h->RxState=HAL_UART_STATE_READY; h->hdmarx->State=HAL_DMA_STATE_READY;
++    }
++    HAL_UARTEx_RxEventCallback(h,n);
++}
++int main() {
++    uint8_t data[300]={1,2,3}, read[512]{};
++    CAN_RxFrame frame{}; USART_Stats uart_stats{}; CAN_Stats can_stats{};
++    assert(CAN_Transmit(nullptr,1,data,1)==HAL_ERROR);
++    assert(USART_Transmit(nullptr,data,1,USART_MODE_DMA)==HAL_ERROR);
++    assert(PWM_Start(nullptr,TIM_CHANNEL_1)==HAL_ERROR);
++    assert(bsp_Init()==HAL_ERROR);
++    setup();
++    assert(CAN_Transmit(&hcan1,1,data,1)==HAL_ERROR);
++    assert(USART_Transmit(&huart1,data,1,USART_MODE_DMA)==HAL_ERROR);
++    assert(PWM_Start(&htim1,TIM_CHANNEL_1)==HAL_ERROR);
++    enabled[DMA2_Stream2_IRQn]=false;
++    assert(USART_Init()==HAL_ERROR); enabled[DMA2_Stream2_IRQn]=true;
++    mock_dma[0].Init.Channel=5;
++    assert(USART_Init()==HAL_ERROR); mock_dma[0].Init.Channel=DMA_CHANNEL_4;
++    filter_result=HAL_ERROR;
++    assert(CAN_Init()==HAL_ERROR); filter_result=HAL_OK;
++    assert(bsp_Init()==HAL_OK);
++    assert(filters[0].SlaveStartFilterBank==14 && filters[1].SlaveStartFilterBank==14);
++    assert(filters[0].FilterBank==0 && filters[1].FilterBank==14);
++    auto previous=config_calls; assert(CAN_Init()==HAL_OK && config_calls==previous);
++    assert(CAN_Transmit(&hcan1,0x800,data,1)==HAL_ERROR);
++    assert(CAN_Transmit(&hcan1,1,data,9)==HAL_ERROR);
++    assert(CAN_Transmit(&hcan1,1,nullptr,1)==HAL_ERROR);
++    assert(CAN_Transmit(&hcan1,0x200,data,3)==HAL_OK);
++    assert(sent_header.DLC==3 && sent_header.StdId==0x200);
++    assert(sent_payload[0]==1 && sent_payload[2]==3 && sent_payload[3]==0 && sent_payload[7]==0);
++    assert(CAN_Transmit(&hcan2,1,nullptr,0)==HAL_OK);
++    mailbox_free=0; assert(CAN_Transmit(&hcan1,1,data,1)==HAL_BUSY); mailbox_free=3;
++    CAN1->ESR=CAN_ESR_BOFF; assert(CAN_Transmit(&hcan1,1,data,1)==HAL_ERROR); CAN1->ESR=0;
++    incoming={0x201,CAN_ID_STD,CAN_RTR_DATA,8};
++    rx_pending=6; HAL_CAN_RxFifo0MsgPendingCallback(&hcan1); assert(rx_pending==3);
++    HAL_CAN_RxFifo0MsgPendingCallback(&hcan1);
++    for(unsigned i=0;i<12;++i) { rx_pending=1; HAL_CAN_RxFifo0MsgPendingCallback(&hcan1); }
++    assert(CAN_GetStats(&hcan1,&can_stats)==HAL_OK && can_stats.received==16 && can_stats.dropped==2);
++    for(unsigned i=0;i<16;++i) assert(CAN_Read(&hcan1,&frame)==HAL_OK && frame.id==0x201 && frame.data[7]==0x42);
++    assert(CAN_Read(&hcan1,&frame)==HAL_BUSY && CAN_Read(&hcan2,&frame)==HAL_BUSY);
++    incoming.IDE=1; rx_pending=1; HAL_CAN_RxFifo0MsgPendingCallback(&hcan1);
++    assert(CAN_Read(&hcan1,&frame)==HAL_BUSY);
++    assert(USART_Transmit(&huart1,nullptr,1,USART_MODE_IT)==HAL_ERROR);
++    assert(USART_Transmit(&huart1,data,0,USART_MODE_DMA)==HAL_ERROR);
++    assert(USART_Transmit(&huart1,data,257,USART_MODE_DMA)==HAL_ERROR);
++    assert(USART_Transmit(&huart1,data,1,static_cast<USART_Mode>(8))==HAL_ERROR);
++    tx_result=HAL_ERROR; assert(USART_Transmit(&huart1,data,3,USART_MODE_DMA)==HAL_ERROR);
++    tx_result=HAL_OK;
++    assert(USART_Transmit(&huart1,data,3,USART_MODE_DMA)==HAL_OK);
++    data[0]=9; assert(huart1.tx[0]==1 && huart1.tx!=data);
++    assert(USART_Transmit(&huart1,data,3,USART_MODE_IT)==HAL_BUSY);
++    huart1.gState=HAL_UART_STATE_READY; HAL_UART_TxCpltCallback(&huart1);
++    assert(USART_Transmit(&huart1,data,3,USART_MODE_IT)==HAL_OK);
++    huart1.gState=HAL_UART_STATE_READY; HAL_UART_TxCpltCallback(&huart1);
++    ipsr=1; assert(USART_Transmit(&huart1,data,3,USART_MODE_BLOCK)==HAL_ERROR); ipsr=0;
++    assert(USART_Transmit(&huart1,data,3,USART_MODE_BLOCK,HAL_MAX_DELAY)==HAL_ERROR);
++    tx_result=HAL_TIMEOUT; assert(USART_Transmit(&huart1,data,3,USART_MODE_BLOCK)==HAL_TIMEOUT); tx_result=HAL_OK;
++    auto calls=rx_calls;
++    inject_uart(&huart1,128,0x12,HAL_UART_RXEVENT_HT);
++    assert(rx_calls==calls && USART_Read(&huart1,read,512)==0);
++    inject_uart(&huart1,256,0x34,HAL_UART_RXEVENT_TC);
++    inject_uart(&huart1,256,0x56);
++    assert(USART_GetStats(&huart1,&uart_stats)==HAL_OK && uart_stats.received_bytes==511 && uart_stats.dropped_bytes==1);
++    assert(USART_Read(&huart1,read,512)==256 && read[0]==0x34 && read[255]==0x34);
++    assert(USART_Read(&huart1,read,512)==255 && read[0]==0x56);
++    assert(USART_Read(&huart6,read,512)==0);
++    huart1.RxState=HAL_UART_STATE_READY; huart1.hdmarx->State=HAL_DMA_STATE_READY;
++    huart1.ErrorCode=8; HAL_UART_ErrorCallback(&huart1);
++    rx_result=HAL_ERROR; assert(USART_Service(&huart1)==HAL_ERROR);
++    rx_result=HAL_OK; assert(USART_Service(&huart1)==HAL_OK && huart1.RxState==HAL_UART_STATE_BUSY_RX);
++    assert(USART_Transmit(&huart1,data,3,USART_MODE_DMA)==HAL_OK);
++    huart1.hdmatx->State=HAL_DMA_STATE_BUSY; huart1.gState=HAL_UART_STATE_READY;
++    HAL_UART_ErrorCallback(&huart1);
++    HAL_UART_TxCpltCallback(&huart1); // Late completion must not release errored storage.
++    assert(USART_Transmit(&huart1,data,3,USART_MODE_DMA)==HAL_BUSY);
++    assert(USART_Service(&huart1)==HAL_OK && huart1.hdmatx->State==HAL_DMA_STATE_READY);
++    assert(USART_Transmit(&huart1,data,3,USART_MODE_DMA)==HAL_OK);
++    huart1.gState=HAL_UART_STATE_READY; HAL_UART_TxCpltCallback(&huart1);
++    assert(USART_Receive(&huart1,data,1)==HAL_ERROR); // Host stack isn't DMA SRAM.
++    assert(USART_StopReceive(&huart1)==HAL_OK);
++    auto *persistent=huart1.rx;
++    assert(USART_Receive(&huart1,persistent,16)==HAL_OK);
++    inject_uart(&huart1,3,0x78); assert(USART_Read(&huart1,read,10)==3 && read[2]==0x78);
++    assert(PWM_SetDutyRatio(&htim1,-0.1f,TIM_CHANNEL_1)==HAL_ERROR);
++    assert(PWM_SetDutyRatio(&htim1,std::numeric_limits<float>::quiet_NaN(),TIM_CHANNEL_1)==HAL_ERROR);
++    assert(PWM_SetDutyRatio(&htim8,0.5f,TIM_CHANNEL_4)==HAL_ERROR);
++    assert(PWM_SetDutyRatio(&htim1,1.0f,TIM_CHANNEL_1)==HAL_OK && TIM1->CCR[0]==20000);
++    assert(PWM_SetPulseUs(&htim1,1500,TIM_CHANNEL_1)==HAL_OK && TIM1->CCR[0]==1500);
++    assert(PWM_SetPulseUs(&htim1,21000,TIM_CHANNEL_1)==HAL_ERROR);
++    assert(PWM_SetPeriod(&htim1,0.01f)==HAL_OK && TIM1->ARR==9999 && TIM1->CCR[0]==750);
++    assert(PWM_SetPeriod(&htim1,0)==HAL_ERROR && PWM_SetPeriod(&htim1,1)==HAL_ERROR);
++    assert(PWM_Start(&htim1,TIM_CHANNEL_1)==HAL_OK);
++    assert(PWM_Start(&htim1,TIM_CHANNEL_1)==HAL_BUSY);
++    assert(PWM_SetPeriod(&htim1,0.02f)==HAL_BUSY);
++    assert(PWM_Start(&htim1,TIM_CHANNEL_2)==HAL_OK);
++    assert(PWM_Stop(&htim1,TIM_CHANNEL_1)==HAL_OK && (TIM1->CR1&TIM_CR1_CEN));
++    assert(PWM_Stop(&htim1,TIM_CHANNEL_2)==HAL_OK && !(TIM1->CR1&TIM_CR1_CEN));
++    assert(PWM_SetPeriod(&htim1,0.02f)==HAL_OK && TIM1->ARR==19999);
++    clocks[2]=false; assert(USART_Transmit(&huart1,data,3,USART_MODE_DMA)==HAL_ERROR);
++    primask=1; assert(CAN_Read(&hcan1,&frame)==HAL_BUSY && primask==1); primask=0;
++    std::puts("PASS: BSP guards, CAN queues, UART DMA lifecycle and PWM boundaries");
++}
+diff --git a/threads/src/alivethread.cpp b/threads/src/alivethread.cpp
+index 8377d7f..f8d100e 100644
+--- a/threads/src/alivethread.cpp
++++ b/threads/src/alivethread.cpp
+@@ -1,5 +1,6 @@
+ #include "threads.hpp"
+ #include "main.h"
++#include "LED.hpp"
+ 
+ void alive_thread_entry(ULONG)
+ {
+@@ -11,17 +12,17 @@ void alive_thread_entry(ULONG)
+         if (status == TX_SUCCESS)
+         {
+             ++app_alive_count;
+-            HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_SET);
+-            HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
++            LED::Set(LED::Color::Red, false);
++            LED::Toggle(LED::Color::Green);
+         }
+         else
+         {
+-            HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
+-            HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
++            LED::Set(LED::Color::Green, false);
++            LED::Set(LED::Color::Red, true);
+         }
+ #else
+         ++app_alive_count;
+-        HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
++        LED::Toggle(LED::Color::Green);
+         tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND / 5);
+ #endif
+     }
+diff --git a/threads/src/app_threadx.cpp b/threads/src/app_threadx.cpp
+index d620012..413b213 100644
+--- a/threads/src/app_threadx.cpp
++++ b/threads/src/app_threadx.cpp
+@@ -1,6 +1,7 @@
+ #include "app_threadx.h"
+ #include "threads.hpp"
+ #include "main.h"
++#include "LED.hpp"
+ 
+ namespace {
+ TX_BYTE_POOL thread_pool;
+@@ -17,7 +18,7 @@ void check(UINT status)
+     if (status != TX_SUCCESS)
+     {
+         app_init_status = status;
+-        HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
++        LED::Set(LED::Color::Red, true);
+         Error_Handler();
+     }
+ }
+@@ -25,7 +26,7 @@ void check(UINT status)
+ void stack_error(TX_THREAD *)
+ {
+     app_stack_error = 1;
+-    HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
++    LED::Set(LED::Color::Red, true);
+     Error_Handler();
+ }
+ 

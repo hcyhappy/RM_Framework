@@ -1,6 +1,7 @@
 #include "app_threadx.h"
 #include "threads.hpp"
 #include "main.h"
+#include "LED.hpp"
 
 namespace {
 TX_BYTE_POOL thread_pool;
@@ -17,7 +18,7 @@ void check(UINT status)
     if (status != TX_SUCCESS)
     {
         app_init_status = status;
-        HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
+        LED::Set(LED::Color::Red, true);
         Error_Handler();
     }
 }
@@ -25,7 +26,7 @@ void check(UINT status)
 void stack_error(TX_THREAD *)
 {
     app_stack_error = 1;
-    HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
+    LED::Set(LED::Color::Red, true);
     Error_Handler();
 }
 
