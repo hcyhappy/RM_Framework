@@ -1,0 +1,13 @@
+# Build output and local tool settings
+build/
+Build/
+cmake-build-*/
+CMakeUserPresets.json
+*.o
+*.obj
+*.elf
+*.hex
+*.bin
+*.map
+.DS_Store
+Thumbs.db

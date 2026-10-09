@@ -1,0 +1,2 @@
+# Preserve upstream ThreadX formatting without whitespace warnings.
+board/Middlewares/ThreadX/** -whitespace
