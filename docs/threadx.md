@@ -10,12 +10,12 @@
 - `threads/src/app_threadx.cpp`：调用 tx_kernel_enter，在 tx_application_define 中分配内存、创建信号量及线程。
 - `threads/src/alivethread.cpp`：等待演示心跳，通过绿色 LED 反映存活，超时亮红灯。
 - `main.c`：只在 USER CODE 区调用应用入口。
-- 修正 UART NVIC，使 USART1/6 和 DMA 中断可以配合工作。未启动 DMA 接收，BSP TODO 后续实现。
+- 修正 UART NVIC，使 USART1/6 和 DMA 中断可以配合工作。后续 BSP 接入已启动双串口 DMA 接收，详见 docs/bsp.md。
 - 将原 BMI088 中未配置的 htim10 引用置于默认关闭的加热开关，允许框架编译；未补完 IMU、PID 或电机功能。
 
 ## 启动顺序与时基
 
-启动文件初始化数据、BSS 和 C++ 静态对象 → main → HAL_Init（TIM6 开始计时）→ SystemClock_Config（TIM6 随时钟重配）→ 外设初始化 → app_threadx_start → tx_kernel_enter → _tx_initialize_low_level → tx_application_define → ThreadX 调度。
+启动文件初始化数据、BSS 和 C++ 静态对象 → main → HAL_Init（TIM6 开始计时）→ SystemClock_Config（TIM6 随时钟重配）→ 外设初始化 → bsp_Init → app_threadx_start → tx_kernel_enter → _tx_initialize_low_level → tx_application_define → ThreadX 调度。
 
 HAL 的 uwTick 来自 TIM6，每毫秒增加一次；ThreadX 的 tx_time_get 来自 SysTick，每毫秒一个 tick。现在 tx_thread_sleep(200) 是约 200 ms。同步测试不要在 ISR 或 tx_application_define 中调用 HAL_Delay；内核初始化期间全局中断关闭。
 
