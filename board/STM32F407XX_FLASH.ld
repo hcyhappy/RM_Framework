@@ -257,13 +257,5 @@ SECTIONS
   } >RAM
 
 
-
-  /* Remove information from the standard libraries */
-  /DISCARD/ :
-  {
-    libc.a:* ( * )
-    libm.a:* ( * )
-    libgcc.a:* ( * )
-  }
-
+  ASSERT(_end + _Min_Heap_Size <= _estack - _Min_Stack_Size, "RAM heap/stack overlap")
 }

@@ -1,68 +1,55 @@
 cmake_minimum_required(VERSION 3.22)
-
-#
-# This file is generated only once,
-# and is not re-generated if converter is called multiple times.
-#
-# User is free to modify the file as much as necessary
-#
-
-# Setup compiler settings
+project(board LANGUAGES C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS ON)
-
-
-# Define the build type
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Debug")
+    set(CMAKE_BUILD_TYPE Debug)
 endif()
-
-# Set the project name
-set(CMAKE_PROJECT_NAME board)
-
-# Enable compile command to ease indexing with e.g. clangd
-set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
-
-# Core project settings
-project(${CMAKE_PROJECT_NAME})
-message("Build type: " ${CMAKE_BUILD_TYPE})
-
-# Enable CMake support for ASM and C languages
-enable_language(C ASM)
-
-# Create an executable object type
-add_executable(${CMAKE_PROJECT_NAME})
-
-# Add STM32CubeMX generated sources
+add_executable(board)
 add_subdirectory(cmake/stm32cubemx)
 
-# Link directories setup
-target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined library search paths
-)
+# Keep the board-owned HAL timebase after CubeMX regeneration.
+get_target_property(mx_sources board SOURCES)
+list(FILTER mx_sources EXCLUDE REGEX "stm32f4xx_hal_timebase_tim\\.c$")
+set_property(TARGET board PROPERTY SOURCES "${mx_sources}")
+# Generated handlers remain available under separate names; the RTOS owns vectors.
+set_source_files_properties(Core/Src/stm32f4xx_it.c PROPERTIES COMPILE_DEFINITIONS
+    "PendSV_Handler=CubeMX_PendSV_Handler;SysTick_Handler=CubeMX_SysTick_Handler;TIM6_DAC_IRQHandler=CubeMX_TIM6_DAC_IRQHandler;USART1_IRQHandler=CubeMX_USART1_IRQHandler;USART6_IRQHandler=CubeMX_USART6_IRQHandler")
 
-# Add sources to executable
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
-)
+set(FRAMEWORK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+file(GLOB framework_sources CONFIGURE_DEPENDS
+    "${FRAMEWORK_ROOT}/bsp/src/*.cpp"
+    "${FRAMEWORK_ROOT}/libs/src/*.cpp"
+    "${FRAMEWORK_ROOT}/modules/src/*.cpp"
+    "${FRAMEWORK_ROOT}/threads/src/*.cpp")
+target_sources(board PRIVATE ${framework_sources}
+    Core/Src/threadx_port.c Core/Src/hal_timebase.c)
+target_include_directories(board PRIVATE
+    Core/Inc
+    "${FRAMEWORK_ROOT}/bsp/include"
+    "${FRAMEWORK_ROOT}/libs/include"
+    "${FRAMEWORK_ROOT}/modules/include"
+    "${FRAMEWORK_ROOT}/threads/include")
 
-# Add include paths
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
-)
-
-# Add project symbols (macros)
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined symbols
-)
-
-# Remove wrong libob.a library dependency when using cpp files
+set(TX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/ThreadX")
+file(GLOB tx_sources CONFIGURE_DEPENDS
+    "${TX_ROOT}/common/src/*.c"
+    "${TX_ROOT}/ports/cortex_m4/gnu/src/*.S")
+add_library(threadx STATIC ${tx_sources})
+target_include_directories(threadx PUBLIC
+    "${TX_ROOT}/common/inc" "${TX_ROOT}/ports/cortex_m4/gnu/inc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc")
+target_compile_definitions(threadx PUBLIC TX_INCLUDE_USER_DEFINE_FILE)
+target_link_libraries(board stm32cubemx threadx)
+option(RM_ENABLE_HEARTBEAT_DEMO "Run the semaphore heartbeat test" ON)
+option(RM_ENABLE_IMU_HEATER "Compile the optional TIM10 heater path" OFF)
+target_compile_definitions(board PRIVATE
+    RM_ENABLE_HEARTBEAT_DEMO=$<BOOL:${RM_ENABLE_HEARTBEAT_DEMO}>
+    RM_ENABLE_IMU_HEATER=$<BOOL:${RM_ENABLE_IMU_HEATER}>)
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
-
-# Add linked libraries
-target_link_libraries(${CMAKE_PROJECT_NAME}
-    stm32cubemx
-
-    # Add user defined libraries
-)
+add_custom_command(TARGET board POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:board> $<TARGET_FILE_DIR:board>/board.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:board> $<TARGET_FILE_DIR:board>/board.bin)

@@ -28,6 +28,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_threadx.h"
 
 /* USER CODE END Includes */
 
@@ -103,6 +104,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
+  app_threadx_start();
 
   /* USER CODE END 2 */
 

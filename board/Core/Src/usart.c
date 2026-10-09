@@ -160,6 +160,8 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_LINKDMA(uartHandle,hdmatx,hdma_usart1_tx);
 
   /* USER CODE BEGIN USART1_MspInit 1 */
+    HAL_NVIC_SetPriority(USART1_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(USART1_IRQn);
 
   /* USER CODE END USART1_MspInit 1 */
   }
@@ -221,6 +223,8 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_LINKDMA(uartHandle,hdmatx,hdma_usart6_tx);
 
   /* USER CODE BEGIN USART6_MspInit 1 */
+    HAL_NVIC_SetPriority(USART6_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(USART6_IRQn);
 
   /* USER CODE END USART6_MspInit 1 */
   }
@@ -249,6 +253,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
     HAL_DMA_DeInit(uartHandle->hdmarx);
     HAL_DMA_DeInit(uartHandle->hdmatx);
   /* USER CODE BEGIN USART1_MspDeInit 1 */
+    HAL_NVIC_DisableIRQ(USART1_IRQn);
 
   /* USER CODE END USART1_MspDeInit 1 */
   }
@@ -270,6 +275,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
     HAL_DMA_DeInit(uartHandle->hdmarx);
     HAL_DMA_DeInit(uartHandle->hdmatx);
   /* USER CODE BEGIN USART6_MspDeInit 1 */
+    HAL_NVIC_DisableIRQ(USART6_IRQn);
 
   /* USER CODE END USART6_MspDeInit 1 */
   }

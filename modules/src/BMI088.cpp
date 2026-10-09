@@ -63,7 +63,11 @@ namespace BMI088
         // TODO: 温度读取完成后，用 TempPid 计算加热占空比并限制到 [0, 1]。
         // 未完成前保持加热关闭。
         (void)target_temp;
+#if RM_ENABLE_IMU_HEATER
         PWM_SetDutyRatio(&HEATING_RESISTANCE_TIM, 0.0f, HEATING_RESISTANCE_CHANNEL);
+#else
+        self_test.TEMP_CTRL_ERR = true;
+#endif
     }
 
     void cBMI088::VerifyAccChipID()
