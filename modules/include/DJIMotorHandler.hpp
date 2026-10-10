@@ -2,13 +2,13 @@
 #define DJIMOTORHANDLER_HPP
 
 #include "DJIMotor.hpp"
+#include "bsp_can.hpp"
 
 /**
  * @brief 电机控制类
  */
-class DJIMotorHandler
-{
-public:
+class DJIMotorHandler {
+  public:
     /**
      *@brief 使用指针数组, 2个CAN口，每个CAN口最多8个电机
      */
@@ -32,12 +32,17 @@ public:
      * @param hcan CAN句柄
      * @param canId 电机ID
      */
-    void registerMotor(DJIMotor *DJImotor, CAN_HandleTypeDef *hcan, uint16_t canId); // 使用指针作为参数
+    bool registerMotor(DJIMotor *DJImotor, CAN_HandleTypeDef *hcan,
+                       uint16_t canId); // 使用指针作为参数
 
     /**
      * @brief 发送控制数据
      */
-    void sendControlData();
+    HAL_StatusTypeDef sendControlData();
+    // Own the BSP CAN queues in one control thread; drains up to 16 frames per bus.
+    void PollFeedback();
+    // Optional dispatch for non-motor or unregistered CAN frames, in caller thread context.
+    void (*unhandledFrame)(CAN_HandleTypeDef *, const CAN_RxFrame &) = nullptr;
 
     /**
      * @brief 处理并更新电机反馈数据
@@ -51,8 +56,11 @@ public:
 
     void UpdateSensorData(DJIMotor *motor, uint8_t *can_receive_data);
 
-    static DJIMotorHandler *Instance()
-    {
+  private:
+    uint32_t previousDrops_[2]{};
+
+  public:
+    static DJIMotorHandler *Instance() {
         static DJIMotorHandler instance;
         return &instance;
     }

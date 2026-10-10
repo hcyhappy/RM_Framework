@@ -13,19 +13,24 @@
  *
  * 这个类实现了M2006电机的控制方法，包括输出设置等。
  */
-class M2006 final : public DJIMotor
-{
-public:
+class M2006 final : public DJIMotor {
+  public:
     /**
      * @brief 构造函数，初始化M2006电机控制类。
      */
     M2006();
+    // Explicitly re-zero at the current shaft position after initial feedback or a dropout.
+    bool ZeroPosition();
 
     /**
      * @brief 析构函数。
      */
     ~M2006() override = default;
 
+  private:
+    MotorControlModeType previousMode_ = RELAX_MODE;
+
+  public:
     /**
      * @brief 实现电机输出设置。
      * 根据当前的控制模式和PID反馈调整电机输出。
@@ -36,4 +41,4 @@ public:
     MotorStateTypedef AliveCheck() override;
 };
 
-#endif //RM26_M2006_HPP
+#endif // RM26_M2006_HPP
