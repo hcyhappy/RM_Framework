@@ -23,3 +23,14 @@
 - 直接读取 ELF 向量表，核对 PendSV、SysTick、TIM6、CAN1/2 RX0、USART1/6、DMA2 Stream1/2/6/7 共11个入口，均匹配实际符号。
 - Linux x86-64 HAL 模拟测试（UBSan）通过：未初始化、错误参数/映射/NVIC、CAN队列、UART复制/重装填/溢出/错误恢复、PWM边界和多通道、PRIMASK恢复。
 - 按用户要求跳过硬件测试。未运行 CubeMX GUI 重新生成；Normal DMA 连续流量丢失窗口、电气与真实并发时序仍需上板验证。
+
+## 2026-10-10：libs PID 与基础函数
+
+- 基线：main 474cef570bb2502bb4fff265851e86fbdfaa1219，已包含BSP。
+- 补全位置式与增量式PID，输出限幅与累计积分限幅；增量式使用实际允许的积分增量，GetIntegralOutput用于观察累计I。
+- Clear、模式变更与非法输入清理历史，Tuning拒绝非有限参数；double中间量避免限幅前溢出，尚未测量MCU执行时间。
+- 保留CRC表与正常报文结果、CRC16字节顺序和最短长度约定；补齐CRC8空指针保护，CRC16空指针返回调用方种子。
+- Numeric::LimitABS补充负/非有限上限与NaN输入处理。
+- g++主机测试通过（ASan/UBSan；LeakSanitizer因沙箱进程访问限制关闭，不作为泄漏验证）：公式、饱和/反向积分、1万次限幅、Clear/Tuning/模式切换、异常浮点、独立逐位CRC参考及损坏报文。
+- Arm GNU13.2.1板级Debug/Release构建通过，日志未见warning/error；Debug FLASH40020 B、Release FLASH21856 B，普通SRAM均30472 B。PID尚未接入运行控制链路，未引用函数可被链接器移除。
+- 未上板、不启动电机或加热；闭环参数整定、实际采样周期和运行耗时待硬件验证。

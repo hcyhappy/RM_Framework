@@ -41,7 +41,7 @@ uint16_t Get_CRC16_Check_Sum(const uint8_t *pchMessage, uint32_t dwLength, uint1
   uint8_t ch_data;
 
   if (pchMessage == nullptr)
-    return 0xFFFF;
+    return wCRC;
   while (dwLength--)
   {
     ch_data = *pchMessage++;
@@ -113,6 +113,9 @@ const uint8_t W_CRC8_TABLE[256] = {
 uint8_t Get_CRC8_Check_Sum(const uint8_t *pchMessage, uint16_t dwLength, uint8_t ucCRC8)
 {
   uint8_t ucIndex;
+
+  if (pchMessage == nullptr)
+    return ucCRC8;
 
   while (dwLength--)
   {
