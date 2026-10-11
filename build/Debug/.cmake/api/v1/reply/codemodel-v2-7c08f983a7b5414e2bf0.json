@@ -1,0 +1,113 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"projectIndex" : 0,
+					"source" : "."
+				},
+				{
+					"build" : "board",
+					"childIndexes" : 
+					[
+						2
+					],
+					"jsonFile" : "directory-board-Debug-df0312fb54f1f9457ee2.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "board",
+					"targetIndexes" : 
+					[
+						1,
+						2
+					]
+				},
+				{
+					"build" : "board/cmake/stm32cubemx",
+					"jsonFile" : "directory-board.cmake.stm32cubemx-Debug-c97d324638c9b15caa86.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 0,
+					"source" : "board/cmake/stm32cubemx",
+					"targetIndexes" : 
+					[
+						0
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1,
+						2
+					],
+					"name" : "board",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 2,
+					"id" : "STM32_Drivers::@54d3542b93787d1dae47",
+					"jsonFile" : "target-STM32_Drivers-Debug-e2c21430da24fc80910e.json",
+					"name" : "STM32_Drivers",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "board::@da039aa0f48ce6d11a40",
+					"jsonFile" : "target-board-Debug-e88c10c0b04ddb566ae7.json",
+					"name" : "board",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "threadx::@da039aa0f48ce6d11a40",
+					"jsonFile" : "target-threadx-Debug-8e4405c64545ff636b74.json",
+					"name" : "threadx",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "D:/RM_Framework/rm27_training_framework_hw/build/Debug",
+		"source" : "D:/RM_Framework/rm27_training_framework_hw"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

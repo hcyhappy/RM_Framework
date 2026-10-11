@@ -1,0 +1,463 @@
+{
+	"globsDependent" : 
+	[
+		{
+			"expression" : "D:/RM_Framework/rm27_training_framework_hw/board/../bsp/src/*.cpp",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"D:/RM_Framework/rm27_training_framework_hw/board/../bsp/src/bsp.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../bsp/src/bsp_can.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../bsp/src/bsp_i2c.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../bsp/src/bsp_pwm.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../bsp/src/bsp_time.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../bsp/src/bsp_usart.cpp"
+			]
+		},
+		{
+			"expression" : "D:/RM_Framework/rm27_training_framework_hw/board/../libs/src/*.cpp",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"D:/RM_Framework/rm27_training_framework_hw/board/../libs/src/crc.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../libs/src/math.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../libs/src/pid.cpp"
+			]
+		},
+		{
+			"expression" : "D:/RM_Framework/rm27_training_framework_hw/board/../modules/src/*.cpp",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"D:/RM_Framework/rm27_training_framework_hw/board/../modules/src/BMI088.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../modules/src/DJIMotorHandler.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../modules/src/IST8310.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../modules/src/LED.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../modules/src/M2006.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../modules/src/ahrs6.cpp"
+			]
+		},
+		{
+			"expression" : "D:/RM_Framework/rm27_training_framework_hw/board/../threads/src/*.cpp",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"D:/RM_Framework/rm27_training_framework_hw/board/../threads/src/alivethread.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../threads/src/app_threadx.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../threads/src/controlthread.cpp",
+				"D:/RM_Framework/rm27_training_framework_hw/board/../threads/src/imuthread.cpp"
+			]
+		},
+		{
+			"expression" : "D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/*.c",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_allocate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_cleanup.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_pool_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_block_release.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_allocate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_cleanup.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_pool_search.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_byte_release.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_cleanup.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_set.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_event_flags_set_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_initialize_high_level.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_initialize_kernel_enter.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_initialize_kernel_setup.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_misra.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_cleanup.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_priority_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_mutex_put.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_cleanup.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_flush.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_front_send.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_receive.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_send.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_queue_send_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_ceiling_put.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_cleanup.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_put.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_semaphore_put_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_entry_exit_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_identify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_preemption_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_priority_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_relinquish.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_reset.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_resume.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_shell_entry.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_sleep.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_stack_analyze.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_stack_error_handler.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_stack_error_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_suspend.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_system_preempt_check.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_system_resume.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_system_suspend.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_terminate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_time_slice.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_time_slice_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_timeout.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_thread_wait_abort.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_time_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_time_set.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_activate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_deactivate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_expiration_process.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_performance_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_performance_system_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_system_activate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_system_deactivate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_timer_thread_entry.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_buffer_full_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_disable.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_enable.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_event_filter.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_event_unfilter.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_initialize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_interrupt_control.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_isr_enter_insert.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_isr_exit_insert.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_object_register.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_object_unregister.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/tx_trace_user_event_insert.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_block_allocate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_block_pool_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_block_pool_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_block_pool_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_block_pool_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_block_release.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_byte_allocate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_byte_pool_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_byte_pool_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_byte_pool_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_byte_pool_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_byte_release.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_event_flags_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_event_flags_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_event_flags_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_event_flags_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_event_flags_set.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_event_flags_set_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_mutex_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_mutex_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_mutex_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_mutex_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_mutex_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_mutex_put.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_flush.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_front_send.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_receive.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_send.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_queue_send_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_ceiling_put.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_prioritize.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_put.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_semaphore_put_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_entry_exit_notify.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_info_get.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_preemption_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_priority_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_relinquish.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_reset.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_resume.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_suspend.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_terminate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_time_slice_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_thread_wait_abort.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_timer_activate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_timer_change.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_timer_create.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_timer_deactivate.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_timer_delete.c",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/common/src/txe_timer_info_get.c"
+			]
+		},
+		{
+			"expression" : "D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/*.S",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_misra.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_context_restore.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_context_save.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_interrupt_control.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_interrupt_disable.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_interrupt_restore.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_schedule.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_stack_build.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_thread_system_return.S",
+				"D:/RM_Framework/rm27_training_framework_hw/board/Middlewares/ThreadX/ports/cortex_m4/gnu/src/tx_timer_interrupt.S"
+			]
+		}
+	],
+	"inputs" : 
+	[
+		{
+			"path" : "CMakeLists.txt"
+		},
+		{
+			"isGenerated" : true,
+			"path" : "build/Debug/CMakeFiles/3.31.12/CMakeSystem.cmake"
+		},
+		{
+			"path" : "board/cmake/gcc-arm-none-eabi.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake"
+		},
+		{
+			"isGenerated" : true,
+			"path" : "build/Debug/CMakeFiles/3.31.12/CMakeCCompiler.cmake"
+		},
+		{
+			"isGenerated" : true,
+			"path" : "build/Debug/CMakeFiles/3.31.12/CMakeCXXCompiler.cmake"
+		},
+		{
+			"isGenerated" : true,
+			"path" : "build/Debug/CMakeFiles/3.31.12/CMakeASMCompiler.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeGenericSystem.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeInitializeConfigs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Platform/Generic.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeCInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU-C.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Platform/Generic.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Internal/CMakeCLinkerInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeCXXInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU-CXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Platform/Generic.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeASMInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU-ASM.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Internal/CMakeASMLinkerInformation.cmake"
+		},
+		{
+			"path" : "board/CMakeLists.txt"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeASMInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU-ASM.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU.cmake"
+		},
+		{
+			"path" : "board/cmake/stm32cubemx/CMakeLists.txt"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/CMakeASMInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU-ASM.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "C:/Users/18818/Downloads/cmake-3.31.12-windows-x86_64/cmake-3.31.12-windows-x86_64/share/cmake-3.31/Modules/Compiler/GNU.cmake"
+		}
+	],
+	"kind" : "cmakeFiles",
+	"paths" : 
+	{
+		"build" : "D:/RM_Framework/rm27_training_framework_hw/build/Debug",
+		"source" : "D:/RM_Framework/rm27_training_framework_hw"
+	},
+	"version" : 
+	{
+		"major" : 1,
+		"minor" : 1
+	}
+}
