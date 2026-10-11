@@ -1,0 +1,49 @@
+{
+    // Cortex-Debug configurations for STM32F407VGTx (custom board).
+    //   STLink : ST-LINK/V2, V2-1, V3 over SWD
+    //   DAP    : CMSIS-DAP / DAPLink probe over SWD
+    // The target script must match the MCU: STM32F407 -> target/stm32f4x.cfg
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "STM32 Debug (STLink)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "serverpath": "openocd",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/board.elf",
+            "preLaunchTask": "cmake-build-debug",
+            "device": "STM32F407VGT6",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f4x.cfg",
+            ],
+            "runToEntryPoint": "main",
+            "liveWatch": {
+                "enabled": true,
+                "samplesPerSecond": 20
+            }
+        },
+        {
+            "name": "STM32 Debug (DAP)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "serverpath": "openocd",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/board/board.elf",
+            //"preLaunchTask": "cmake-build-debug",
+            "device": "STM32F407VGT6",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32f4x.cfg"
+            ],
+            "runToEntryPoint": "main",
+            "liveWatch": {
+                "enabled": true,
+                "samplesPerSecond": 20
+            }
+        }
+    ]
+}

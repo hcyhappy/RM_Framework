@@ -59,3 +59,5 @@
 - 主机 UBSan 线程测试覆盖初始化创建失败不 resume、快照互斥/tick 回绕、心跳超时/LED逻辑、BMI 读取失败、双环结果/停机、发送 BUSY/取消超时、反馈掉线恢复不自动使能、AHRS 积分和重力校正；BSP/modules 及原 libs ASan/UBSan 测试通过。主机桩不模拟真实抢占/ISR时序。
 - 最终资源：Debug FLASH 73552 B，Release FLASH 43708 B，允许输出 Debug FLASH 76192 B，关闭选做 Debug FLASH 60068 B；均 SRAM 35760 B，CCM 未使用。
 - 按用户要求跳过上板。未验证物理灯效、轴映射、采样时序、栈余量、CAN断线行为或PID稳定性；不把编译/主机测试等同硬件验收。
+
+## 2026.10.11 BMI088 初始化通过，静止三轴及温度读数合理，线程心跳正常；动态与长期稳定性待验证
