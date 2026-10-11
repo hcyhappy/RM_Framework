@@ -9,4 +9,7 @@ HAL_StatusTypeDef CAN_Transmit(CAN_HandleTypeDef *, uint32_t id, const uint8_t *
 /* Nonblocking; HAL_BUSY means empty. 16 queued frames per bus. */
 HAL_StatusTypeDef CAN_Read(CAN_HandleTypeDef *, CAN_RxFrame *);
 HAL_StatusTypeDef CAN_GetStats(CAN_HandleTypeDef *, CAN_Stats *);
+/* Single CAN owner thread only. Request abort of all pending TX mailboxes.
+ * HAL_BUSY until hardware completes abort; a frame already on wire cannot be recalled. */
+HAL_StatusTypeDef CAN_AbortPending(CAN_HandleTypeDef *);
 #endif

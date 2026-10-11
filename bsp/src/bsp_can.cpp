@@ -85,6 +85,15 @@ HAL_StatusTypeDef CAN_Read(CAN_HandleTypeDef *hcan, CAN_RxFrame *frame) {
     --bus->count;
     return HAL_OK;
 }
+HAL_StatusTypeDef CAN_AbortPending(CAN_HandleTypeDef *hcan) {
+    if (__get_IPSR() || __get_PRIMASK()) return HAL_ERROR;
+    BspCritical lock;
+    if (!ready(hcan, bus_for(hcan))) return HAL_ERROR;
+    constexpr uint32_t all = CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2;
+    const auto status = HAL_CAN_AbortTxRequest(hcan, all);
+    if (status != HAL_OK) return status;
+    return HAL_CAN_IsTxMessagePending(hcan, all) ? HAL_BUSY : HAL_OK;
+}
 HAL_StatusTypeDef CAN_GetStats(CAN_HandleTypeDef *hcan, CAN_Stats *stats) {
     if (!stats) return HAL_ERROR;
     BspCritical lock;

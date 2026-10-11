@@ -44,10 +44,14 @@ target_include_directories(threadx PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc")
 target_compile_definitions(threadx PUBLIC TX_INCLUDE_USER_DEFINE_FILE)
 target_link_libraries(board stm32cubemx threadx)
-option(RM_ENABLE_HEARTBEAT_DEMO "Run the semaphore heartbeat test" ON)
+option(RM_ENABLE_IST8310 "Poll optional magnetic field (not fused)" ON)
+option(RM_ENABLE_AHRS6 "Compute six-axis attitude in IMU thread" ON)
+option(RM_ENABLE_MOTOR_OUTPUT "Permit explicit motor arming after PID configuration" OFF)
 option(RM_ENABLE_IMU_HEATER "Compile the optional TIM10 heater path" OFF)
 target_compile_definitions(board PRIVATE
-    RM_ENABLE_HEARTBEAT_DEMO=$<BOOL:${RM_ENABLE_HEARTBEAT_DEMO}>
+    RM_ENABLE_IST8310=$<BOOL:${RM_ENABLE_IST8310}>
+    RM_ENABLE_AHRS6=$<BOOL:${RM_ENABLE_AHRS6}>
+    RM_ENABLE_MOTOR_OUTPUT=$<BOOL:${RM_ENABLE_MOTOR_OUTPUT}>
     RM_ENABLE_IMU_HEATER=$<BOOL:${RM_ENABLE_IMU_HEATER}>)
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 add_custom_command(TARGET board POST_BUILD

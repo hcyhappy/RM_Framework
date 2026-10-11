@@ -109,6 +109,10 @@ void inject_uart(UART_HandleTypeDef *h,uint16_t n,uint8_t value,uint32_t event=H
     }
     HAL_UARTEx_RxEventCallback(h,n);
 }
+uint32_t abort_pending=0;
+HAL_StatusTypeDef abort_status=HAL_OK;
+extern "C" HAL_StatusTypeDef HAL_CAN_AbortTxRequest(CAN_HandleTypeDef *,uint32_t bits) { assert(bits==7); return abort_status; }
+extern "C" uint32_t HAL_CAN_IsTxMessagePending(CAN_HandleTypeDef *,uint32_t bits) { assert(bits==7); return abort_pending; }
 int main() {
     uint8_t data[300]={1,2,3}, read[512]{};
     CAN_RxFrame frame{}; USART_Stats uart_stats{}; CAN_Stats can_stats{};
@@ -130,6 +134,11 @@ int main() {
     assert(filters[0].SlaveStartFilterBank==14 && filters[1].SlaveStartFilterBank==14);
     assert(filters[0].FilterBank==0 && filters[1].FilterBank==14);
     auto previous=config_calls; assert(CAN_Init()==HAL_OK && config_calls==previous);
+    assert(CAN_AbortPending(nullptr)==HAL_ERROR);
+    assert(CAN_AbortPending(&hcan1)==HAL_OK);
+    abort_pending=1; assert(CAN_AbortPending(&hcan1)==HAL_BUSY); abort_pending=0;
+    abort_status=HAL_ERROR; assert(CAN_AbortPending(&hcan1)==HAL_ERROR); abort_status=HAL_OK;
+    ipsr=1; assert(CAN_AbortPending(&hcan1)==HAL_ERROR); ipsr=0;
     assert(CAN_Transmit(&hcan1,0x800,data,1)==HAL_ERROR);
     assert(CAN_Transmit(&hcan1,1,data,9)==HAL_ERROR);
     assert(CAN_Transmit(&hcan1,1,nullptr,1)==HAL_ERROR);

@@ -1,0 +1,1407 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 8dec7e2..c0e4adc 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -7,6 +7,6 @@
+ - ThreadX 内核固定为 `v6.4.2_rel`。不要直接修改 `board/Middlewares/ThreadX` 的第三方代码；升级时记录版本和来源。
+ - CMake 将生成文件中的 PendSV、SysTick、TIM6 和 UART 中断处理重命名；实际向量由 ThreadX/板级适配提供。修改时必须检查 ELF 符号和向量表，避免双重所有者。
+ - TIM6 为 HAL 1 ms 时基；SysTick 为 ThreadX 1 ms tick。线程内等待使用 `tx_thread_sleep` 或同步对象，避免忙等。ISR 不阻塞、不调 `HAL_Delay`。
+-- 当前在 MX 初始化后执行 `bsp_Init`（CAN 接收、UART DMA 接收、PWM 检查），再启用 alive 和 heartbeat 演示；不自动启动舵机 PWM、IMU、电机或加热。
++- 当前在 MX 初始化后执行 `bsp_Init`（CAN 接收、UART DMA 接收、PWM 检查），再启用 alive、imu、control 三线程；IMU 自动初始化与采样。电机默认只接收反馈，实际输出需验证 PID 并显式解锁；不自动启动舵机 PWM 或加热。
+ - 每一步单独编译并上板验证。编译成功与硬件验收分别记录，不把未观察的结果写成成功。
+ - 使用小范围提交；文档简洁，调试记录放在 `docs/logs.md`。提交中不包含 build、二进制、个人路径或重复工程压缩包。
+diff --git a/board/CMakeLists.txt b/board/CMakeLists.txt
+index da3a149..146ff43 100644
+--- a/board/CMakeLists.txt
++++ b/board/CMakeLists.txt
+@@ -44,10 +44,14 @@ target_include_directories(threadx PUBLIC
+     "${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc")
+ target_compile_definitions(threadx PUBLIC TX_INCLUDE_USER_DEFINE_FILE)
+ target_link_libraries(board stm32cubemx threadx)
+-option(RM_ENABLE_HEARTBEAT_DEMO "Run the semaphore heartbeat test" ON)
++option(RM_ENABLE_IST8310 "Poll optional magnetic field (not fused)" ON)
++option(RM_ENABLE_AHRS6 "Compute six-axis attitude in IMU thread" ON)
++option(RM_ENABLE_MOTOR_OUTPUT "Permit explicit motor arming after PID configuration" OFF)
+ option(RM_ENABLE_IMU_HEATER "Compile the optional TIM10 heater path" OFF)
+ target_compile_definitions(board PRIVATE
+-    RM_ENABLE_HEARTBEAT_DEMO=$<BOOL:${RM_ENABLE_HEARTBEAT_DEMO}>
++    RM_ENABLE_IST8310=$<BOOL:${RM_ENABLE_IST8310}>
++    RM_ENABLE_AHRS6=$<BOOL:${RM_ENABLE_AHRS6}>
++    RM_ENABLE_MOTOR_OUTPUT=$<BOOL:${RM_ENABLE_MOTOR_OUTPUT}>
+     RM_ENABLE_IMU_HEATER=$<BOOL:${RM_ENABLE_IMU_HEATER}>)
+ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
+ add_custom_command(TARGET board POST_BUILD
+diff --git a/bsp/include/bsp_can.hpp b/bsp/include/bsp_can.hpp
+index 4ffc8ca..eaec498 100644
+--- a/bsp/include/bsp_can.hpp
++++ b/bsp/include/bsp_can.hpp
+@@ -9,4 +9,7 @@ HAL_StatusTypeDef CAN_Transmit(CAN_HandleTypeDef *, uint32_t id, const uint8_t *
+ /* Nonblocking; HAL_BUSY means empty. 16 queued frames per bus. */
+ HAL_StatusTypeDef CAN_Read(CAN_HandleTypeDef *, CAN_RxFrame *);
+ HAL_StatusTypeDef CAN_GetStats(CAN_HandleTypeDef *, CAN_Stats *);
++/* Single CAN owner thread only. Request abort of all pending TX mailboxes.
++ * HAL_BUSY until hardware completes abort; a frame already on wire cannot be recalled. */
++HAL_StatusTypeDef CAN_AbortPending(CAN_HandleTypeDef *);
+ #endif
+diff --git a/bsp/src/bsp_can.cpp b/bsp/src/bsp_can.cpp
+index 20103e3..142bbf7 100644
+--- a/bsp/src/bsp_can.cpp
++++ b/bsp/src/bsp_can.cpp
+@@ -85,6 +85,15 @@ HAL_StatusTypeDef CAN_Read(CAN_HandleTypeDef *hcan, CAN_RxFrame *frame) {
+     --bus->count;
+     return HAL_OK;
+ }
++HAL_StatusTypeDef CAN_AbortPending(CAN_HandleTypeDef *hcan) {
++    if (__get_IPSR() || __get_PRIMASK()) return HAL_ERROR;
++    BspCritical lock;
++    if (!ready(hcan, bus_for(hcan))) return HAL_ERROR;
++    constexpr uint32_t all = CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2;
++    const auto status = HAL_CAN_AbortTxRequest(hcan, all);
++    if (status != HAL_OK) return status;
++    return HAL_CAN_IsTxMessagePending(hcan, all) ? HAL_BUSY : HAL_OK;
++}
+ HAL_StatusTypeDef CAN_GetStats(CAN_HandleTypeDef *hcan, CAN_Stats *stats) {
+     if (!stats) return HAL_ERROR;
+     BspCritical lock;
+diff --git a/docs/logs.md b/docs/logs.md
+index 07fa3a8..65da3a0 100644
+--- a/docs/logs.md
++++ b/docs/logs.md
+@@ -46,3 +46,16 @@
+ - Arm GNU13.2.1板级 Debug/Release 编译通过；默认 FLASH40020/21856 B、SRAM30472 B。额外强制链接30个模块/I²C入口成功，FLASH58532 B、SRAM30872 B，无未解析符号；此为链接测试，不运行新增模块。
+ - 核对默认 Debug ELF 的11个 RTOS/HAL/CAN/UART/DMA 向量入口，均匹配实际符号。构建日志无warning/error。
+ - 按用户要求未上板；未改 board.ioc、启动线程、外设中断或第三方内核。不自动初始化传感器、电机驱动或加热；采样时序、PID参数、机械原点、CAN负载和线程栈余量待硬件/threads阶段验证。
++
++## threads：监控、IMU 与单电机控制
++
++- 基线 8d42693：最新主线已有完整 modules，沿用 BMI088/IST8310/M2006，未重新应用旧 modules 补丁。
++- 将 heartbeat 演示替换为 alive/imu/control；三线程全部创建暂停，全部对象成功后 resume；优先级 4/8/6，栈 1536/4096/3072 B，12 KiB byte pool，优先级继承互斥锁。
++- 初始化事件与两项独立心跳均使用 tx_semaphore_put/get；循环绝对周期 sleep，超时也至少 sleep 1 tick。线程存活与设备健康分离，alive 独占运行灯效。
++- IMU 自动初始化与采样、带时间戳的快照、读失败有效标志、重试、温度缓存；可选 IST8310 与简化六轴重力校正默认开启，磁场不参与融合。
++- control 独占 CAN 队列、注册单个 M2006、显式使能后执行位置/速度双环；掉线/丢帧/循环超时/CAN错误锁存停机，需明确重新使能并重置相对零点。BSP 增加取消待发送邮箱接口；不能撤回已在总线上的报文。
++- 默认 RM_ENABLE_MOTOR_OUTPUT=OFF，PID 增益仍为零，不发送控制报文，不自动驱动电机、舵机或加热。实际启用步骤及原理见 docs/threads-guide.md。
++- Arm GNU 13.2.1 构建通过：Debug、Release、允许输出的 Debug（增益仍零）、关闭 IST8310/AHRS 的 Debug。最终日志无 warning/error。每项 ELF 检查 11 个关键中断向量，并确认无未解析符号。
++- 主机 UBSan 线程测试覆盖初始化创建失败不 resume、快照互斥/tick 回绕、心跳超时/LED逻辑、BMI 读取失败、双环结果/停机、发送 BUSY/取消超时、反馈掉线恢复不自动使能、AHRS 积分和重力校正；BSP/modules 及原 libs ASan/UBSan 测试通过。主机桩不模拟真实抢占/ISR时序。
++- 最终资源：Debug FLASH 73552 B，Release FLASH 43708 B，允许输出 Debug FLASH 76192 B，关闭选做 Debug FLASH 60068 B；均 SRAM 35760 B，CCM 未使用。
++- 按用户要求跳过上板。未验证物理灯效、轴映射、采样时序、栈余量、CAN断线行为或PID稳定性；不把编译/主机测试等同硬件验收。
+diff --git a/docs/threads-guide.md b/docs/threads-guide.md
+new file mode 100644
+index 0000000..186d42f
+--- /dev/null
++++ b/docs/threads-guide.md
+@@ -0,0 +1,279 @@
++# ThreadX 线程实现与学习说明
++
++适用：STM32F407IGH6 标准 RoboMaster C 板；仓库 `hcyhappy/RM_Framework`。
++基线提交：`8d42693d8fb96680d273ad4b13ef32dcd6a23058`。本次完成 alive、imu、control，替换旧 heartbeat 演示。
++
++**默认三个线程都运行；电机默认只接收反馈，不发送控制报文。** 六轴姿态和 IST8310 读取默认打开，可分别关闭。PID 参数保留为零，必须按实际电机台架填写，再打开输出开关并显式使能。没有板子，本次不声称完成硬件验收。
++
++## 1. 文件与调用关系
++
++| 文件 | 职责 |
++|---|---|
++| `threads/src/app_threadx.cpp` | 创建内存池、互斥锁、信号量、线程；共享 API、周期等待、错误检查 |
++| `threads/src/alivethread.cpp` | 消费初始化事件和两个独立心跳，统一控制运行灯效 |
++| `threads/src/imuthread.cpp` | BMI088 初始化、重试、采样、温度缓存、可选磁场与六轴解算 |
++| `threads/src/controlthread.cpp` | 独占 CAN 队列，注册 M2006，执行双环，处理停机、掉线及发送故障 |
++| `threads/include/app_config.hpp` | 电机 CAN/ID、PID/限幅、线程周期等实际应用参数 |
++| `threads/include/threads.hpp` | 数据快照、健康状态及安全的线程调用接口 |
++| `modules/include/ahrs6.hpp`、`modules/src/ahrs6.cpp` | 与 HAL/ThreadX 无关的六轴姿态算法 |
++| `bsp/src/bsp_can.cpp` | 新增取消待发送 CAN 报文的 BSP 接口 |
++| `tests/threads/` | 主机异常路径测试、ELF 中断向量检查 |
++
++```mermaid
++flowchart TD
++    A["MX 初始化 → bsp_Init"] --> B["创建同步对象与三个暂停线程"]
++    B --> C["检查全部成功后 resume"]
++    C --> D["alive：信号量与灯效"]
++    C --> E["imu：驱动与快照"]
++    C --> F["control：反馈与双环"]
++```
++
++`main.c` 已在 MX 初始化后调用 `bsp_Init`，成功才进入 `app_threadx_start`；本次沿用这个入口。BSP 初始化失败时，原有 main 点亮红灯并进入 `Error_Handler`，不会进入内核。内核对象创建失败或栈检查报错同样保留红灯并停止执行。
++
++没有修改 `board.ioc`、时钟树、NVIC、HAL 时基、中断适配或第三方 ThreadX 内核。TIM6 仍给 HAL 1 ms 时基，SysTick 仍给 ThreadX 1 ms tick。以后重新生成 CubeMX 代码，仍须保留原有 USER CODE 初始化调用。
++
++## 2. 优先级、栈和 sleep
++
++| 线程 | 优先级 | 独立栈 | 正常周期 | 用途 |
++|---|---:|---:|---:|---|
++| alive | 4 | 1536 B | 100 ms | 尽快观察普通任务停滞，工作后立即 sleep |
++| control | 6 | 3072 B | 2 ms | 单电机控制与反馈 |
++| imu | 8 | 4096 B | 2 ms | IMU SPI/I²C 采样与姿态计算 |
++
++ThreadX 数字越小优先级越高。内核定时器线程优先级仍为 0，栈 1024 B。调度采用抢占，三个应用线程的抢占阈值等于自身优先级，均不使用时间片。alive 的优先级高于 control/imu，所以普通任务在 CPU 中卡住时，alive 仍有机会报警；若中断被永久关闭或高优先级 ISR 卡死，软件监控自身也无法继续执行。此版本未增加独立硬件看门狗。
++
++线程栈从静态 **12288 B byte pool** 中分配，共申请 8704 B，剩余供池管理与预留；不使用无边界 `_end` 分配。互斥锁、线程控制块、数据快照另外占 SRAM。MSP/链接脚本的主栈和 C/C++ heap 与线程栈是不同区域，未改原有链接设置。保持 8 字节池起始对齐，并开启既有 `TX_ENABLE_STACK_CHECKING` 与栈错误回调。容量已满足链接，但实际最大栈使用量须在板上测量，不能由编译成功推出。
++
++`AppSleepUntil(deadline, period)` 用绝对 deadline 减少“运行耗时 + 固定 sleep”累计漂移：
++
++1. 下一 deadline 加一个周期；
++2. 尚未超时则 sleep 剩余 tick；
++3. 已超时则计入 `missedDeadlines`，重置时间参考并 **至少 sleep 1 tick**，不连续追赶旧周期；
++4. 使用 32 位差值处理 tick 回绕，所有这里使用的间隔远小于半个计数范围。
++
++`AppTicks(ms)` 向上取整换算 tick。当前 1 tick = 1 ms，但代码不假定每种 ThreadX 工程都是这个值。BMI088/IST8310 驱动内部初始化等待也会在运行线程中调用 `tx_thread_sleep`。所有正常 `for(;;)` 都会阻塞等待；外设 HAL 调用不放在关闭中断的长临界区中。
++
++## 3. alive：用独立信号量监控
++
++创建三个计数信号量，初值均为 0：
++
++| 信号量 | 谁 put | alive 如何 get |
++|---|---|---|
++| `init_semaphore` | 内核对象创建成功、BMI 初始化状态变化、电机注册完成 | `TX_NO_WAIT` 消费事件，再查看各初始化状态 |
++| `imu_semaphore` | imu 主循环进展时 | `TX_NO_WAIT` 消费心跳，记录最近看到心跳的时刻 |
++| `control_semaphore` | control 主循环进展时 | 同上，完全独立于 imu 的心跳 |
++
++`tx_semaphore_put` 给计数加一，成功的 `tx_semaphore_get` 消耗一个。不能让两项任务共用一个“存活”信号量，否则一项不停 put 就可能掩盖另一项已死。初始化信号量只表达“状态变了”，究竟谁成功、谁失败以锁保护的 `AppHealth` 为准；它不是“收到一次 put 就代表整个板子正常”。
++
++`AppPulse` 将每个任务的心跳频率限制为 20 ms 一次；alive 每 100 ms 最多消费每个信号量 16 个 token，正常约 5 个，会清空旧心跳。消费端总量足够，并有工作上限，避免监控线程长时间占 CPU。上电有 2000 ms 宽限，之后连续 500 ms 没有对应新心跳就判该任务停滞。
++
++**线程存活与设备正常分开判断：**
++
++- BMI 初始化失败：`imuInit=Failed`，立即红灯；imu 在重试期间仍能上报线程心跳。
++- BMI 读失败：`imuDataOk=false`，独立反映；连续 3 次采样失败后转初始化失败，约 1 s 后再尝试配置。
++- control 即使没有电机反馈，仍处理队列、更新状态、put 心跳并 sleep。此时是 `AwaitFeedback`，不能把它误写成控制线程死亡。
++- 电机使能后掉线、丢失多圈位置连续性、控制循环间隔超过 10 ms、连续 CAN 发送失败等，会进入 `Fault` 并清 PID/输出。
++- 可选磁力计失败不会把可正常工作的 BMI088 判死；看 `magneticValid` 与 `magneticMs`。
++
++灯效由 alive 统一写，不让普通 imu/control 线程争抢 GPIO：
++
++| 灯效 | 含义 |
++|---|---|
++| 蓝灯每秒亮约 200 ms | alive 仍在执行；不等于所有设备都正常 |
++| 红绿同步闪烁 | 尚在初始化／等待首批有效 BMI 数据 |
++| 绿灯每秒亮约 500 ms | 初始化及线程监控正常，但电机未运行位置控制 |
++| 绿灯常亮 | 电机控制状态为 Running |
++| 红灯常亮、绿灯灭 | 必需模块初始化失败、数据异常、心跳超时或控制故障 |
++
++蓝灯独立于红绿诊断；红灯时蓝灯仍可能闪。故障退出后灯效随状态恢复；电机故障则仍需要显式重新使能。`app_init_status` 是 ThreadX 对象创建/错误状态，不是 BMI 初始化状态。
++
++## 4. imu：单一驱动所有者与数据共享
++
++只有 imu 线程使用 BMI088 的 SPI1/片选。初始化在内核启动后执行，因此软复位、寄存器配置的等待不会占住 CPU 忙等。默认保留 modules 的 ±6g、±2000°/s 配置，输出已分别换算到 m/s² 和 rad/s；加速度 SPI 读操作中的额外 dummy 字节由模块丢弃，线程不重复处理。
++
++每个采样循环分别读 acc 和 gyro，分别保存返回状态，**两者都成功才发布 `valid=true` 的新数据**。读取失败保留之前的数值并把有效标志置假，不用全零伪装有效测量。温度约每 200 ms 读取并缓存，带自己的有效标志和读取时间。芯片温度寄存器更新约 1.28 s，频繁读寄存器不会加快芯片温度转换。加速度读取的数据结构中的温度字段也不会覆盖缓存温度。
++
++这里用 2 ms 软件轮询；BMI acc 800 Hz、gyro 1000 Hz 的内部采样并不因此同步到 500 Hz。现有 PC4/PC5 是普通输入而非 EXTI，本次不依靠 DRDY，也不宣称每次都是同一时刻的新转换。要进一步提高同步精度，需要单独设计 DRDY/时间戳方案。
++
++共享对象采用 `TX_MUTEX`，启用 `TX_INHERIT` 优先级继承。锁内只复制快照／修改状态，**SPI、I²C、sleep、PID、CAN 发包均在锁外**。继承机制缓解低优先级任务持锁时阻挡高优先级任务的问题；锁范围短更为关键。
++
++应用线程这样读取：
++
++```cpp
++#include "threads.hpp"
++#include "bsp_time.hpp"
++
++ImuSnapshot imu;
++if (GetImuSnapshot(&imu) && imu.valid &&
++    uint32_t(BSP_GetTickMs() - imu.sampleMs) < 20) {
++    // imu.acceleration: m/s²
++    // imu.angularVelocity: rad/s
++    // imu.attitude: 四元数及 roll/pitch/yaw；另检查 attitudeValid
++}
++tx_thread_sleep(AppTicks(10));
++```
++
++`GetImuSnapshot` 的 true 表示复制成功，不代表传感器数据有效或新鲜。该接口用 `TX_NO_WAIT`，锁忙时返回 false，下一周期再取。禁止在 ISR 中取快照，也不要直接并发读取调试用的 `app_imu` / `app_health`。`sequence` 仅在完整 acc/gyro 成功采样时递增。
++
++原始加速度、角速度和姿态的“body”当前指 **BMI 原生传感器坐标系**。板子安装到车体后，必须核对实际轴方向；如需车体坐标，在解算前对 acc 和 gyro 应用相同的正交旋转。磁力计原生坐标另行核对，不能直接假定与 BMI 一致。
++
++## 5. IST8310 选做
++
++默认 `RM_ENABLE_IST8310=ON`。imu 线程初始化磁力计，经 BSP I²C1 读取，量纲 µT。模块使用单次转换：触发 → 等待至少 5 ms → 检查 DRDY → 读取 XYZ/状态 → 触发下一次。线程每约 10 ms 尝试一次，`HAL_BUSY` 表示转换未就绪，不当作普通通信错误。
++
++I²C 错误／超过约 100 ms 没得到转换数据会把磁场有效标志清除，再约 1 s 后重新初始化。快照带 `magneticMs`，消费者仍应按自身需求检查数据年龄。BMI 重初始化耗时期间磁场可能暂时变旧，因此时间戳检查不能省略。若不需要磁力计：
++
++```powershell
++cmake --preset Debug -DRM_ENABLE_IST8310=OFF
++cmake --build --preset Debug
++```
++
++本次实现磁场读取，**没有实现九轴融合**；磁场不偷偷影响六轴 yaw。
++
++## 6. 六轴姿态：实现和局限
++
++默认 `RM_ENABLE_AHRS6=ON`。`Ahrs6` 是简化的 Mahony 风格重力比例校正滤波器：只用 gyro 和 acc，Kp=2 s⁻¹、Ki=0，没有在线偏置估计。采用标量在前的单位四元数 $q=(w,x,y,z)$，表示传感器坐标到世界坐标的旋转；欧拉角按 ZYX 提取，单位 rad。
++
++### 6.1 gyro 提供短时间旋转
++
++角速度必须是 rad/s，四元数运动学是：
++
++$$
++\dot q=\frac12q\otimes(0,\omega_x,\omega_y,\omega_z)
++$$
++
++本实现用实际相邻采样读取时间差计算 dt，欧拉积分一步，再归一化四元数。dt 非有限、≤0、>50 ms 时，算法接口拒绝更新；线程在长间隔／重初始化／采样失败后重新建立姿态参考。重新建立参考会重新置 yaw 基准，不能据此驱动需要连续绝对航向的功能。
++
++### 6.2 acc 提供重力方向约束
++
++加速度计测的是比力，静止且原生 +Z 朝上时读到约 +g。首次用：
++
++$$
++\phi=\operatorname{atan2}(a_y,a_z),\qquad
++\theta=\operatorname{atan2}(-a_x,\sqrt{a_y^2+a_z^2})
++$$
++
++初始化横滚和俯仰，初始航向设为 0。从当前 q 预测传感器坐标中的向上方向：
++
++$$
++\hat{\mathbf g}=
++\begin{bmatrix}
++2(xz-wy)\\2(wx+yz)\\1-2(x^2+y^2)
++\end{bmatrix}
++$$
++
++归一化加速度 $\hat{\mathbf a}$ 与预测方向做叉积，形成角速度校正：
++
++$$
++\mathbf e=\hat{\mathbf a}\times\hat{\mathbf g},\qquad
++\boldsymbol\omega_c=\boldsymbol\omega+K_p\mathbf e
++$$
++
++把 $\boldsymbol\omega_c$ 代回四元数积分即可。为减轻明显线加速度影响，仅在加速度模长处于 0.8g～1.2g 时使用重力校正，其余情况仅 gyro 积分。**模长门限不能识别所有线加速度**，这个简化滤波器还不是完成动态标定和鲁棒性评估的比赛导航算法。
++
++### 6.3 六轴为什么不能给绝对 yaw
++
++绕重力方向旋转不会改变静止加速度方向，所以 acc 无法观测 yaw。yaw 仍靠 gyro 积分，零偏会导致漂移；Ki=0 也不会自动估计 gyro 偏置。欧拉 yaw 在 ±π 处回绕，俯仰接近 ±90° 时欧拉角存在奇异性；需要连续旋转表示时优先使用四元数，并另外实现航向展开。
++
++本实现未自动调用 `Calibrate`：静止标定必须确保板子真的不动，不能在车已运动时盲目求“零偏”。可在未来增加有明确静止条件的标定状态机和相应心跳宽限。
++
++### 6.4 为什么比赛中常谨慎使用九轴
++
++九轴可利用地磁校正 yaw，但前提是磁场可信。电机磁体、钢件、供电电流和环境磁性物体会造成硬铁／软铁及变化的磁场干扰。恒定安装误差可通过标定减轻，但电流随运动变化、车体位置变化导致的干扰不一定能由一份固定标定消除。盲目融合可能把外部磁干扰当作车体转向，反而使 yaw 跳动。
++
++这是结合磁力计原理与机器人使用环境作出的工程判断，**不是比赛禁止九轴，也不是所有队伍都不用九轴**。需要绝对航向时，可在磁标定、布局和干扰验证后进行磁场门控融合，或引入视觉／其他可靠航向参考。编码器也有滑移误差，替代参考仍需评估。
++
++## 7. control：单电机双环
++
++默认选择 CAN1、C610 ID1，反馈 ID 为 `0x201`，控制分组为 `0x200`。换 CAN 或电机 ID 时只改 `app_config.hpp`。反馈速度与位置均是 **M2006 减速箱输出轴**：rad/s 与相对多圈 rad，不是转子 rpm。
++
++每 2 ms：
++
++1. `PollFeedback` 读取两个 BSP CAN 队列，更新注册电机；
++2. `AliveCheck` 判断反馈超时、位置连续性等；
++3. 锁内取控制命令，锁外验证使能、PID 配置和电机在线状态；
++4. 显式首次使能时 `ZeroPosition`，把当时输出轴角度定义为相对零点；
++5. 位置 PID 输出限幅后的目标速度，速度 PID 输出限幅后的 C610 电流命令；
++6. handler 打包 CAN，更新健康快照，put 心跳，sleep。
++
++$$
++e_p=\theta_{set}-\theta_{fdb},\quad
++\omega_{set}=\operatorname{clip}(PID_p(e_p),\pm\omega_{max})
++$$
++
++$$
++e_v=\omega_{set}-\omega_{fdb},\quad
++I_{cmd}=\operatorname{clip}(PID_v(e_v),\pm I_{max})
++$$
++
++两环在本训练实现中同周期执行；输出和积分限幅使用既有 PID 类。当前 PID 的 ki/kd 是离散系数，连续参数需换算 $k_i=K_iT_s$、$k_d=K_d/T_s$，这里正常 $T_s=0.002$ s。改线程周期后应重新检查系数；这不是自动根据每次抖动重算连续 PID 的实现。
++
++默认 `CurrentLimit=1000`（C610 命令约 ±1 A），`MaxSpeed=1 rad/s`、`MaxPosition=2π rad`。**这些是约束，不是验证过的 PID 参数**。当前 `SpeedKp/PositionKp` 等仍为 0，`MotorConfigValid` 不允许这种未配置状态解锁。调参从较小输出限制和 P 参数开始，先速度环，再位置环，再考虑积分和微分；实际稳定性、方向和机械负载需台架验证。主机测试用的 P 值仅为算术测试，不能照搬到硬件。
++
++### 7.1 如何实际启用
++
++1. 在 `threads/include/app_config.hpp` 核对 `MotorCanBus`、反馈 ID、超时，以及允许的位置／速度／电流；填写经过台架验证的 PID 参数。配置检查要求增益和限幅为有限非负数，两环 Kp>0，电流≤10000，反馈超时≤50 ms。
++2. 打开构建开关：
++
++```powershell
++cmake --preset Debug -DRM_ENABLE_MOTOR_OUTPUT=ON
++cmake --build --preset Debug
++```
++
++3. 等待电机反馈正常，在一个运行线程中显式提交命令：
++
++```cpp
++// 放在你的命令处理线程中；不要放在 ISR 或 tx_application_define 中。
++// 调用返回 false 时，检查输出开关、PID 配置、注册及在线状态。
++bool accepted = SetMotorCommand(true, 0.2f); // 输出轴相对本次使能零点转 0.2 rad
++// 后续 true 调用只更新目标，不重新置零。
++// 停止：
++// SetMotorCommand(false, 0.0f);
++```
++
++这段是调用示例，不会在固件中自动执行。当前没有遥控器协议／按键命令层，因此默认不会自行解锁电机。也可以在 control 循环更新健康状态后添加经过你确认的台架命令逻辑，但不要反复执行“失败就自动 disable/enable”，否则会绕过故障锁存设计。
++
++`ZeroPosition` 只是当前角度作为相对零点，不是机械回零，不代表已找到限位。掉线、CAN 丢帧导致多圈位置失效时需要显式 disable → enable，重新核对位置含义；不自动回到旧目标。
++
++### 7.2 故障、发送与总线所有权
++
++控制已使能后，如果反馈超过 50 ms、位置连续性丢失、控制间隔超过 10 ms，或发送发生非 BUSY 错误／连续 5 次 BUSY，则清两环状态、置零并锁存 Fault。没有看到 disable → enable 的新使能代次时，反馈恢复也不重新运行。
++
++停机或故障会通过 `CAN_AbortPending` 请求取消该 CAN 的旧待发送报文；新非零命令必须等到取消完成。连续取消失败同样导致故障。显式停机后在取消完成时提交一次全零报文；使能状态的故障期间会继续尝试零命令。
++
++`HAL_OK` 仅表示 CAN 邮箱接受，并非对方已经执行。取消请求是异步的，`HAL_BUSY` 表示尚未完成；已经发上总线的报文无法撤回。若总线断开、Bus-Off 或接收端断电，软件无法保证零命令送达；ESC 超时保护及独立停机措施仍需实际硬件验证。
++
++本例 control 是 **两个 BSP CAN 接收队列的唯一消费者**。其他协议应接入 `unhandledFrame` 分发，不另开线程竞争读取。取消接口会影响该 CAN 的全部发送邮箱，扩展到更多发送者时须先统一发送所有权。handler 对同组未注册电机槽填零，因此单电机台架不要把同组其他独立控制的电机混接；多电机扩展时统一注册和发包。
++
++control 还周期调用 BSP 的 `USART_Service` 恢复已有 UART DMA 接收错误，不消费 UART 数据，也不在控制周期内进行 printf 或阻塞发送。
++
++## 8. 构建、测试和未验证事项
++
++测试基于真实应用源文件，主机使用 ThreadX/HAL 桩；验证对象创建后才 resume、互斥访问、tick 回绕、心跳 token 过期、LED 逻辑、BMI 成功／读故障、双环计算、显式停机、超时锁存、发送忙、取消未完成、掉线恢复需重使能、四元数积分及重力校正。主机测试不能替代真实抢占调度或 ISR 时序测试。
++
++运行（Linux／WSL／Git Bash，需本机 g++）：
++
++```bash
++bash tests/threads/run.sh
++bash tests/bsp/run.sh
++bash tests/modules/run.sh
++ASAN_OPTIONS=detect_leaks=0 bash tests/libs/run.sh
++python3 tests/threads/verify_vectors.py build/Debug/board/board.elf
++```
++
++默认板级工程内执行 preset 时，ELF 路径是 `build/Debug/board.elf`；从仓库根转发构建时是上例的 `build/Debug/board/board.elf`。
++
++本次使用 Arm GNU 13.2.1 完成根入口 Debug、Release、允许输出但零增益的 Debug、关闭磁力计及 AHRS 的 Debug 构建。检查实际 ELF 的 11 个关键中断向量及未解析符号。保留 ThreadX/板级中断所有权。最终资源数字和测试记录见 `docs/logs.md`。
++
++目前未上板验证：RGB 实际灯效、BMI／IST 通信与安装轴、真实采样间隔和 CPU 占用、栈余量、CAN负载／断线保护、输出轴位置方向及 PID 稳定性。六轴 yaw 仍会漂移；本次未做加热、在线零偏估计、九轴融合、机械回零或遥控命令解析。
++
++## 9. 参考资料
++
++以下用于核对原理与 API；本说明的周期、栈、状态机及默认策略来自本次代码设计。
++
++- [ThreadX 官方用户指南与服务 API](https://github.com/eclipse-threadx/rtos-docs/blob/main/rtos-docs/threadx/chapter4.md)：信号量、线程创建、sleep、互斥锁的使用。
++- [固定版本 ThreadX v6.4.2_rel 源码](https://github.com/eclipse-threadx/threadx/tree/v6.4.2_rel)：本工程保持原有内核版本；在线文档可能已更新，编译以仓库固定版本为准。
++- [Bosch BMI088 数据手册](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bmi088-ds001.pdf)：物理单位、温度转换与芯片时序。
++- [Mahony 等，Nonlinear Complementary Filters on the Special Orthogonal Group](https://researchportalplus.anu.edu.au/en/publications/nonlinear-complementary-filters-on-the-special-orthogonal-group/)：姿态互补滤波原理。当前代码是比例重力校正的简化实现，不声称完整复现论文的偏置观测器。
++- [NXP AN4246：硬铁与软铁干扰校准](https://www.nxp.com/docs/en/application-note/AN4246.pdf)。
++- [NXP：磁力计布局与电流干扰](https://www.nxp.com/company/about-nxp/smarter-world-blog/BL-MAGNETOMETER-PLACEMENT-WHERE-WHY)。
+diff --git a/modules/include/ahrs6.hpp b/modules/include/ahrs6.hpp
+new file mode 100644
+index 0000000..f5d358f
+--- /dev/null
++++ b/modules/include/ahrs6.hpp
+@@ -0,0 +1,15 @@
++#pragma once
++struct Attitude6 {
++    float w = 1, x{}, y{}, z{}; // body -> world, scalar-first unit quaternion
++    float roll{}, pitch{}, yaw{}; // intrinsic ZYX rad, yaw has no absolute reference
++};
++class Ahrs6 {
++public:
++    void Reset();
++    // acc: specific force m/s^2 (+Z at level rest), gyro: rad/s, dt: seconds.
++    bool Update(float ax,float ay,float az,float gx,float gy,float gz,float dt);
++    const Attitude6 &Get() const { return attitude_; }
++private:
++    Attitude6 attitude_{};
++    bool initialized_ = false;
++};
+diff --git a/modules/src/ahrs6.cpp b/modules/src/ahrs6.cpp
+new file mode 100644
+index 0000000..823ae78
+--- /dev/null
++++ b/modules/src/ahrs6.cpp
+@@ -0,0 +1,42 @@
++#include "ahrs6.hpp"
++#include <algorithm>
++#include <cmath>
++void Ahrs6::Reset() { attitude_ = {}; initialized_ = false; }
++bool Ahrs6::Update(float ax,float ay,float az,float gx,float gy,float gz,float dt) {
++    if (!std::isfinite(ax)||!std::isfinite(ay)||!std::isfinite(az)||
++        !std::isfinite(gx)||!std::isfinite(gy)||!std::isfinite(gz)||
++        !std::isfinite(dt)||dt<=0||dt>0.05f) return false;
++    const float norm = std::hypot(std::hypot(ax,ay),az);
++    const bool gravityUsable = norm>0.8f*9.80665f && norm<1.2f*9.80665f;
++    if (!initialized_) {
++        if (!gravityUsable) return false;
++        const float r=std::atan2(ay,az), p=std::atan2(-ax,std::hypot(ay,az));
++        attitude_.w=std::cos(r/2)*std::cos(p/2);
++        attitude_.x=std::sin(r/2)*std::cos(p/2);
++        attitude_.y=std::cos(r/2)*std::sin(p/2);
++        attitude_.z=-std::sin(r/2)*std::sin(p/2);
++        initialized_=true;
++    }
++    const auto q=attitude_;
++    if (gravityUsable) {
++        ax/=norm; ay/=norm; az/=norm;
++        const float vx=2*(q.x*q.z-q.w*q.y), vy=2*(q.w*q.x+q.y*q.z);
++        const float vz=1-2*(q.x*q.x+q.y*q.y);
++        // Mahony-style proportional gravity correction, Kp=2 s^-1, Ki=0.
++        gx+=2*(ay*vz-az*vy); gy+=2*(az*vx-ax*vz); gz+=2*(ax*vy-ay*vx);
++    }
++    Attitude6 next=q;
++    const float h=0.5f*dt;
++    next.w+=(-q.x*gx-q.y*gy-q.z*gz)*h;
++    next.x+=(q.w*gx+q.y*gz-q.z*gy)*h;
++    next.y+=(q.w*gy-q.x*gz+q.z*gx)*h;
++    next.z+=(q.w*gz+q.x*gy-q.y*gx)*h;
++    const float n=std::hypot(std::hypot(next.w,next.x),std::hypot(next.y,next.z));
++    if (!std::isfinite(n)||n<1e-6f) return false;
++    next.w/=n; next.x/=n; next.y/=n; next.z/=n;
++    next.roll=std::atan2(2*(next.w*next.x+next.y*next.z),1-2*(next.x*next.x+next.y*next.y));
++    next.pitch=std::asin(std::clamp(2*(next.w*next.y-next.z*next.x),-1.0f,1.0f));
++    next.yaw=std::atan2(2*(next.w*next.z+next.x*next.y),1-2*(next.y*next.y+next.z*next.z));
++    attitude_=next;
++    return true;
++}
+diff --git a/tests/bsp/hal_stub/main.h b/tests/bsp/hal_stub/main.h
+index 5f9f606..76496e9 100644
+--- a/tests/bsp/hal_stub/main.h
++++ b/tests/bsp/hal_stub/main.h
+@@ -105,3 +105,7 @@ int HAL_TIM_GetChannelState(TIM_HandleTypeDef *, uint32_t);
+ HAL_StatusTypeDef HAL_TIM_PWM_Start(TIM_HandleTypeDef *, uint32_t);
+ HAL_StatusTypeDef HAL_TIM_PWM_Stop(TIM_HandleTypeDef *, uint32_t);
+ }
++
++constexpr uint32_t CAN_TX_MAILBOX0=1, CAN_TX_MAILBOX1=2, CAN_TX_MAILBOX2=4;
++extern "C" HAL_StatusTypeDef HAL_CAN_AbortTxRequest(CAN_HandleTypeDef *,uint32_t);
++extern "C" uint32_t HAL_CAN_IsTxMessagePending(CAN_HandleTypeDef *,uint32_t);
+diff --git a/tests/bsp/test_bsp.cpp b/tests/bsp/test_bsp.cpp
+index 0fdcd5a..2fb3829 100644
+--- a/tests/bsp/test_bsp.cpp
++++ b/tests/bsp/test_bsp.cpp
+@@ -109,6 +109,10 @@ void inject_uart(UART_HandleTypeDef *h,uint16_t n,uint8_t value,uint32_t event=H
+     }
+     HAL_UARTEx_RxEventCallback(h,n);
+ }
++uint32_t abort_pending=0;
++HAL_StatusTypeDef abort_status=HAL_OK;
++extern "C" HAL_StatusTypeDef HAL_CAN_AbortTxRequest(CAN_HandleTypeDef *,uint32_t bits) { assert(bits==7); return abort_status; }
++extern "C" uint32_t HAL_CAN_IsTxMessagePending(CAN_HandleTypeDef *,uint32_t bits) { assert(bits==7); return abort_pending; }
+ int main() {
+     uint8_t data[300]={1,2,3}, read[512]{};
+     CAN_RxFrame frame{}; USART_Stats uart_stats{}; CAN_Stats can_stats{};
+@@ -130,6 +134,11 @@ int main() {
+     assert(filters[0].SlaveStartFilterBank==14 && filters[1].SlaveStartFilterBank==14);
+     assert(filters[0].FilterBank==0 && filters[1].FilterBank==14);
+     auto previous=config_calls; assert(CAN_Init()==HAL_OK && config_calls==previous);
++    assert(CAN_AbortPending(nullptr)==HAL_ERROR);
++    assert(CAN_AbortPending(&hcan1)==HAL_OK);
++    abort_pending=1; assert(CAN_AbortPending(&hcan1)==HAL_BUSY); abort_pending=0;
++    abort_status=HAL_ERROR; assert(CAN_AbortPending(&hcan1)==HAL_ERROR); abort_status=HAL_OK;
++    ipsr=1; assert(CAN_AbortPending(&hcan1)==HAL_ERROR); ipsr=0;
+     assert(CAN_Transmit(&hcan1,0x800,data,1)==HAL_ERROR);
+     assert(CAN_Transmit(&hcan1,1,data,9)==HAL_ERROR);
+     assert(CAN_Transmit(&hcan1,1,nullptr,1)==HAL_ERROR);
+diff --git a/tests/modules/test_modules.cpp b/tests/modules/test_modules.cpp
+index cce4c78..ada1284 100644
+--- a/tests/modules/test_modules.cpp
++++ b/tests/modules/test_modules.cpp
+@@ -18,11 +18,13 @@ uint8_t regmap[2][256]{}, mag[256]{};
+ int selected = -1;
+ bool failSPI = false, failI2C = false;
+ unsigned spiLength = 0;
+-uint16_t ledPin = 0;
++uint16_t ledPin = 0, ledOnMask = 0;
+ GPIO_PinState ledState{};
+ uint32_t HAL_GetTick() { return tick; }
+ void HAL_Delay(uint32_t n) { tick += n; }
++#ifndef RM_THREADS_TEST
+ void tx_thread_sleep(ULONG n) { tick += n; }
++#endif
+ void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state) {
+     if (port == &ga || port == &gb) {
+         if (state == GPIO_PIN_RESET) {
+@@ -34,6 +36,7 @@ void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state) {
+     if (port == &gh) {
+         ledPin = pin;
+         ledState = state;
++        if (state == GPIO_PIN_RESET) ledOnMask |= pin; else ledOnMask &= ~pin;
+     }
+ }
+ void HAL_GPIO_TogglePin(GPIO_TypeDef *, uint16_t pin) { ledPin = pin; }
+@@ -110,6 +113,7 @@ void be(uint8_t *p, int v) {
+     p[0] = u >> 8;
+     p[1] = u;
+ }
++#ifndef RM_THREADS_TEST
+ int main() {
+     regmap[0][0] = 0x1e;
+     regmap[1][0] = 0x0f;
+@@ -274,3 +278,5 @@ int main() {
+     clockEnabled = true;
+     std::cout << "Module protocol/control tests passed\n";
+ }
++
++#endif
+diff --git a/tests/threads/run.sh b/tests/threads/run.sh
+new file mode 100644
+index 0000000..cc2b3f3
+--- /dev/null
++++ b/tests/threads/run.sh
+@@ -0,0 +1,13 @@
++#!/usr/bin/env bash
++set -eu
++cd "$(dirname "$0")/../.."
++mkdir -p build/threads-tests
++for output in 0 1; do
++ g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-omit-frame-pointer \
++  -DRM_ENABLE_IST8310=1 -DRM_ENABLE_AHRS6=1 -DRM_ENABLE_MOTOR_OUTPUT="$output" \
++  -Itests/threads/stubs -Itests/modules/hal_stub -Ithreads/include -Imodules/include -Ibsp/include -Ilibs/include \
++  tests/threads/test_threads.cpp threads/src/*.cpp modules/src/BMI088.cpp modules/src/IST8310.cpp \
++  modules/src/M2006.cpp modules/src/DJIMotorHandler.cpp modules/src/LED.cpp modules/src/ahrs6.cpp \
++  bsp/src/bsp_i2c.cpp bsp/src/bsp_time.cpp libs/src/pid.cpp -o "build/threads-tests/test-$output"
++ for scenario in startup initfail alive imu control abort offline ahrs; do "build/threads-tests/test-$output" "$scenario"; done
++done
+diff --git a/tests/threads/stubs/app_config.hpp b/tests/threads/stubs/app_config.hpp
+new file mode 100644
+index 0000000..f2c2568
+--- /dev/null
++++ b/tests/threads/stubs/app_config.hpp
+@@ -0,0 +1,26 @@
++#pragma once
++// Explicit HOST-ONLY gains; production header retains all gains at zero.
++#define AppConfig ProductionConfig
++#include "../../../threads/include/app_config.hpp"
++#undef AppConfig
++namespace AppConfig {
++using ProductionConfig::MotorCanBus;
++using ProductionConfig::MotorFeedbackId;
++using ProductionConfig::CurrentLimit;
++using ProductionConfig::MaxSpeed;
++using ProductionConfig::MaxPosition;
++using ProductionConfig::SpeedIntegralLimit;
++using ProductionConfig::PositionIntegralLimit;
++using ProductionConfig::MotorFeedbackTimeoutMs;
++using ProductionConfig::ControlPeriodMs;
++using ProductionConfig::ImuPeriodMs;
++using ProductionConfig::AlivePeriodMs;
++using ProductionConfig::HeartbeatPeriodMs;
++using ProductionConfig::HeartbeatTimeoutMs;
++using ProductionConfig::StartupGraceMs;
++using ProductionConfig::TemperaturePeriodMs;
++using ProductionConfig::MagneticPeriodMs;
++using ProductionConfig::InitRetryMs;
++constexpr float SpeedKp=100, SpeedKi=0, SpeedKd=0;
++constexpr float PositionKp=4, PositionKi=0, PositionKd=0;
++}
+diff --git a/tests/threads/stubs/tx_api.h b/tests/threads/stubs/tx_api.h
+new file mode 100644
+index 0000000..cf1e97a
+--- /dev/null
++++ b/tests/threads/stubs/tx_api.h
+@@ -0,0 +1,28 @@
++#pragma once
++#include <cstdint>
++using ULONG=uint32_t; using UINT=unsigned; using UCHAR=unsigned char; using CHAR=char;
++#define TX_TIMER_TICKS_PER_SECOND 1000
++constexpr UINT TX_SUCCESS=0, TX_NOT_DONE=0x20, TX_NO_INSTANCE=0x0d;
++constexpr ULONG TX_NO_WAIT=0, TX_WAIT_FOREVER=0xffffffff, TX_NO_TIME_SLICE=0;
++constexpr UINT TX_DONT_START=0, TX_INHERIT=1;
++struct TX_THREAD { void (*entry)(ULONG){}; ULONG bytes{}; UINT priority{}; bool resumed{}; };
++struct TX_SEMAPHORE { unsigned count{}; };
++struct TX_MUTEX { bool created{}, locked{}; };
++struct TX_BYTE_POOL { UCHAR *storage{}; ULONG size{}, used{}; };
++TX_THREAD *tx_thread_identify();
++UINT tx_thread_sleep(ULONG);
++ULONG tx_time_get();
++UINT tx_semaphore_create(TX_SEMAPHORE *,CHAR *,ULONG);
++UINT tx_semaphore_put(TX_SEMAPHORE *);
++UINT tx_semaphore_get(TX_SEMAPHORE *,ULONG);
++UINT tx_mutex_create(TX_MUTEX *,CHAR *,UINT);
++UINT tx_mutex_get(TX_MUTEX *,ULONG);
++UINT tx_mutex_put(TX_MUTEX *);
++UINT tx_byte_pool_create(TX_BYTE_POOL *,CHAR *,void *,ULONG);
++UINT tx_byte_allocate(TX_BYTE_POOL *,void **,ULONG,ULONG);
++UINT tx_thread_stack_error_notify(void (*)(TX_THREAD *));
++UINT tx_thread_create(TX_THREAD *,CHAR *,void (*)(ULONG),ULONG,void *,ULONG,UINT,UINT,ULONG,UINT);
++UINT tx_thread_resume(TX_THREAD *);
++void tx_kernel_enter();
++
++void Error_Handler();
+diff --git a/tests/threads/stubs/usart.h b/tests/threads/stubs/usart.h
+new file mode 100644
+index 0000000..9524ac6
+--- /dev/null
++++ b/tests/threads/stubs/usart.h
+@@ -0,0 +1,4 @@
++#pragma once
++#include "main.h"
++struct UART_HandleTypeDef { int id; };
++extern UART_HandleTypeDef huart1,huart6;
+diff --git a/tests/threads/test_threads.cpp b/tests/threads/test_threads.cpp
+new file mode 100644
+index 0000000..0b2d771
+--- /dev/null
++++ b/tests/threads/test_threads.cpp
+@@ -0,0 +1,156 @@
++#define RM_THREADS_TEST
++#include "../modules/test_modules.cpp" // shared register-map/packet HAL fixture, its main excluded
++#include "threads_internal.hpp"
++#include "app_config.hpp"
++#include "bsp_usart.hpp"
++#include <functional>
++#include <limits>
++#include <string>
++extern "C" void tx_application_define(void *);
++struct Stop {};
++struct Fatal {};
++void Error_Handler() { throw Fatal{}; }
++UART_HandleTypeDef huart1{1},huart6{6};
++std::function<void()> onSleep;
++unsigned sleeps=0, aborts=0;
++bool createFail=false;
++HAL_StatusTypeDef abortResult=HAL_OK;
++std::vector<TX_THREAD *> created;
++TX_THREAD *tx_thread_identify() { static TX_THREAD dummy; return &dummy; }
++ULONG tx_time_get() { return tick; }
++UINT tx_thread_sleep(ULONG n) { assert(n>0); tick+=n; ++sleeps; if(onSleep) onSleep(); return TX_SUCCESS; }
++UINT tx_semaphore_create(TX_SEMAPHORE *s,CHAR *,ULONG count) { s->count=count; return TX_SUCCESS; }
++UINT tx_semaphore_put(TX_SEMAPHORE *s) { ++s->count; return TX_SUCCESS; }
++UINT tx_semaphore_get(TX_SEMAPHORE *s,ULONG wait) { assert(wait==TX_NO_WAIT); if(!s->count)return TX_NO_INSTANCE; --s->count; return TX_SUCCESS; }
++UINT tx_mutex_create(TX_MUTEX *m,CHAR *,UINT inherit) { assert(inherit==TX_INHERIT); m->created=true; return TX_SUCCESS; }
++UINT tx_mutex_get(TX_MUTEX *m,ULONG wait) { assert(m->created); if(m->locked) { assert(wait==TX_NO_WAIT); return TX_NOT_DONE; } m->locked=true; return TX_SUCCESS; }
++UINT tx_mutex_put(TX_MUTEX *m) { assert(m->locked); m->locked=false; return TX_SUCCESS; }
++UINT tx_byte_pool_create(TX_BYTE_POOL *p,CHAR *,void *mem,ULONG size) { *p={static_cast<UCHAR *>(mem),size,0}; return TX_SUCCESS; }
++UINT tx_byte_allocate(TX_BYTE_POOL *p,void **out,ULONG n,ULONG wait) { assert(wait==TX_NO_WAIT && p->used+n<=p->size); *out=p->storage+p->used; p->used+=n; return TX_SUCCESS; }
++UINT tx_thread_stack_error_notify(void (*)(TX_THREAD *)) { return TX_SUCCESS; }
++UINT tx_thread_create(TX_THREAD *t,CHAR *,void (*entry)(ULONG),ULONG,void *,ULONG bytes,UINT pri,UINT threshold,ULONG slice,UINT start) {
++    if(createFail && created.size()==2) return TX_NOT_DONE;
++    assert(start==TX_DONT_START && threshold==pri && slice==TX_NO_TIME_SLICE);
++    *t={entry,bytes,pri,false}; created.push_back(t); return TX_SUCCESS;
++}
++UINT tx_thread_resume(TX_THREAD *t) { assert(created.size()==3 && app_init_status==TX_SUCCESS); t->resumed=true; return TX_SUCCESS; }
++void tx_kernel_enter() { assert(false); }
++HAL_StatusTypeDef CAN_AbortPending(CAN_HandleTypeDef *) { ++aborts; return abortResult; }
++HAL_StatusTypeDef USART_Service(UART_HandleTypeDef *) { return HAL_OK; }
++void run(void (*entry)(ULONG)) { try { entry(0); assert(false); } catch(const Stop &) {} }
++void feedback() { CAN_RxFrame f{0x201,8,{}}; be(f.data,1000); incoming[0].push_back(f); }
++void startup() {
++    tx_application_define(nullptr);
++    assert(created.size()==3 && created[0]->priority==4 && created[1]->priority==8 && created[2]->priority==6);
++    for(auto *t:created) assert(t->resumed && t->bytes>=1536);
++    assert(init_semaphore.count==1);
++    ImuSnapshot snapshot; assert(GetImuSnapshot(&snapshot) && !snapshot.valid);
++    app_data_mutex.locked=true; assert(!GetImuSnapshot(&snapshot)); app_data_mutex.locked=false;
++    assert(!SetMotorCommand(true,std::numeric_limits<float>::quiet_NaN()));
++    assert(!SetMotorCommand(true,0)); // no motor feedback
++    ULONG deadline=0xfffffffcu; tick=deadline;
++    AppSleepUntil(deadline,8); assert(tick==4); // 32-bit tick wrap
++}
++void testAhrs() {
++    Ahrs6 a;
++    for(int i=0;i<500;++i) assert(a.Update(0,0,9.80665f,0,0,1,0.002f));
++    close(a.Get().yaw,1.0f);
++    const auto old=a.Get();
++    assert(!a.Update(0,0,9.80665f,NAN,0,0,0.002f)); close(a.Get().yaw,old.yaw);
++    assert(!a.Update(0,0,9.80665f,0,0,0,0.1f));
++    assert(a.Update(0,0,0,0,0,1,0.002f)); // gyro-only after initial alignment
++    a.Reset();
++    assert(!a.Update(0,0,0,0,0,0,0.002f));
++    assert(a.Update(0,4.903325f,8.49281f,0,0,0,0.002f));
++    close(a.Get().roll,0.5235988f);
++    for(int i=0;i<2000;++i) assert(a.Update(0,0,9.80665f,0,0,0,0.002f));
++    assert(std::fabs(a.Get().roll)<0.001f);
++}
++void testAlive() {
++    app_health.imuInit=app_health.controlInit=InitState::Ready;
++    app_health.imuDataOk=true;
++    tick=0;
++    tx_semaphore_put(&imu_semaphore); tx_semaphore_put(&control_semaphore);
++    onSleep=[] {
++        if(sleeps<3) { assert(app_imu_alive && app_control_alive); tx_semaphore_put(&control_semaphore); }
++        if(sleeps>=3 && sleeps<25) tx_semaphore_put(&control_semaphore);
++        if(sleeps==25) { assert(!app_imu_alive && app_control_alive && (ledOnMask & LED_R_Pin)); throw Stop{}; }
++    };
++    run(alive_thread_entry);
++    assert(imu_semaphore.count==0); // old token cannot keep task alive forever
++}
++void testImu() {
++    regmap[0][0]=0x1e; regmap[1][0]=0x0f;
++    regmap[0][0x16]=0x55; regmap[0][0x17]=0x15; // close to +g in +/-6g
++    mag[0]=0x10; mag[2]=1; mag[3]=10;
++    bool failed=false;
++    onSleep=[&] {
++        if(app_imu.sequence==4 && !failed) { assert(app_imu.valid && app_imu.temperatureValid && app_imu.attitudeValid); failSPI=true; failed=true; }
++        if(failed && app_health.imuInit==InitState::Failed) { assert(!app_imu.valid && app_health.imuReadErrors>=3); throw Stop{}; }
++        assert(sleeps<1000);
++    };
++    run(imu_thread_entry);
++    assert(imu_semaphore.count>0 && init_semaphore.count>=3);
++}
++void testControl() {
++    feedback();
++#if RM_ENABLE_MOTOR_OUTPUT
++    onSleep=[] {
++        const unsigned step=sleeps;
++        feedback();
++        if(step==1) { assert(app_health.motorOnline); assert(SetMotorCommand(true,0.1f)); }
++        if(step==2) { assert(app_health.control==ControlState::Running); assert(app_health.currentCommand==40); assert(!packets.empty()); }
++        if(step==3) assert(SetMotorCommand(false,0));
++        if(step==4) { assert(app_health.currentCommand==0 && packets.back().bytes[1]==0); assert(SetMotorCommand(true,0.2f)); }
++        if(step==5) tick+=20; // deadline failure latches fault
++        if(step==6) { assert(app_health.control==ControlState::Fault && app_health.currentCommand==0); assert(!SetMotorCommand(true,0)); assert(SetMotorCommand(false,0)); assert(SetMotorCommand(true,0.1f)); }
++        if(step==7) { assert(app_health.control==ControlState::Running); sendStatus=HAL_BUSY; }
++        if(step==12) { assert(app_health.control==ControlState::Fault && app_health.canSendErrors>=5); assert(aborts>=3); throw Stop{}; }
++    };
++#else
++    onSleep=[] { feedback(); assert(packets.empty()); assert(!SetMotorCommand(true,0.1f)); if(sleeps==5)throw Stop{}; };
++#endif
++    run(control_thread_entry);
++}
++void testOffline() {
++#if RM_ENABLE_MOTOR_OUTPUT
++    feedback();
++    onSleep=[] {
++        if(sleeps<=3) feedback();
++        if(sleeps==1) assert(SetMotorCommand(true,0.1f));
++        if(sleeps==31) { assert(app_health.control==ControlState::Fault && !app_health.motorOnline && app_health.currentCommand==0); feedback(); }
++        if(sleeps==32) { assert(app_health.motorOnline && app_health.control==ControlState::Fault); assert(!SetMotorCommand(true,0)); assert(SetMotorCommand(false,0)); assert(SetMotorCommand(true,0.1f)); feedback(); }
++        if(sleeps==33) { assert(app_health.control==ControlState::Running); throw Stop{}; }
++    };
++    run(control_thread_entry);
++#endif
++}
++void testAbort() {
++#if RM_ENABLE_MOTOR_OUTPUT
++    feedback();
++    onSleep=[] {
++        feedback();
++        if(sleeps==1) { assert(SetMotorCommand(true,0.1f)); abortResult=HAL_BUSY; }
++        if(sleeps>=2 && sleeps<=6) assert(packets.empty());
++        if(sleeps==6) { assert(app_health.control==ControlState::Fault && app_health.currentCommand==0); abortResult=HAL_OK; }
++        if(sleeps==7) { assert(!packets.empty() && packets.back().bytes[1]==0); throw Stop{}; }
++    };
++    run(control_thread_entry);
++#endif
++}
++int main(int argc,char **argv) {
++    assert(argc==2);
++    const std::string mode=argv[1];
++    if(mode=="ahrs") testAhrs();
++    else if(mode=="initfail") {
++        createFail=true;
++        try { tx_application_define(nullptr); assert(false); } catch(const Fatal &) {}
++        assert(app_init_status==TX_NOT_DONE && created.size()==2 && (ledOnMask & LED_R_Pin));
++        for(auto *t:created) assert(!t->resumed);
++    }
++    else {
++        startup(); sleeps=0; tick=0;
++        if(mode=="alive")testAlive(); else if(mode=="imu")testImu(); else if(mode=="control")testControl(); else if(mode=="abort")testAbort(); else if(mode=="offline")testOffline(); else assert(mode=="startup");
++    }
++    std::cout<<"Thread test passed: "<<mode<<"\n";
++}
+diff --git a/tests/threads/verify_vectors.py b/tests/threads/verify_vectors.py
+new file mode 100644
+index 0000000..abe3599
+--- /dev/null
++++ b/tests/threads/verify_vectors.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++"""Check interrupt vector ownership in the linked firmware, not just compilation."""
++import pathlib
++import struct
++import subprocess
++import sys
++import tempfile
++
++elf = pathlib.Path(sys.argv[1])
++prefix = sys.argv[2] if len(sys.argv) > 2 else 'arm-none-eabi-'
++expected = {
++    14: 'PendSV_Handler', 15: 'SysTick_Handler', 70: 'TIM6_DAC_IRQHandler',
++    36: 'CAN1_RX0_IRQHandler', 80: 'CAN2_RX0_IRQHandler',
++    53: 'USART1_IRQHandler', 87: 'USART6_IRQHandler',
++    73: 'DMA2_Stream1_IRQHandler', 74: 'DMA2_Stream2_IRQHandler',
++    85: 'DMA2_Stream6_IRQHandler', 86: 'DMA2_Stream7_IRQHandler',
++}
++symbols = {}
++for line in subprocess.check_output([prefix+'nm', '-n', str(elf)], text=True).splitlines():
++    parts = line.split()
++    if len(parts) == 3:
++        symbols[parts[2]] = int(parts[0], 16)
++with tempfile.TemporaryDirectory() as tmp:
++    binary = pathlib.Path(tmp)/'vectors.bin'
++    subprocess.run([prefix+'objcopy', '-O', 'binary', '--only-section=.isr_vector', str(elf), str(binary)], check=True)
++    raw = binary.read_bytes()
++    for index, name in expected.items():
++        actual = struct.unpack_from('<I', raw, index*4)[0]
++        assert name in symbols and actual & ~1 == symbols[name] & ~1, (name, hex(actual))
++assert not subprocess.check_output([prefix+'nm', '-u', str(elf)], text=True).strip(), 'Unresolved symbols'
++print(f'PASS: {len(expected)} vectors and no unresolved symbols: {elf}')
+diff --git a/threads/include/app_config.hpp b/threads/include/app_config.hpp
+new file mode 100644
+index 0000000..1ecd9e5
+--- /dev/null
++++ b/threads/include/app_config.hpp
+@@ -0,0 +1,19 @@
++#pragma once
++#include <cstdint>
++namespace AppConfig {
++constexpr unsigned MotorCanBus = 1;
++constexpr uint16_t MotorFeedbackId = 0x201; // C610 ID1, command group 0x200
++constexpr uint16_t CurrentLimit = 1000; // command units, 10000 = 10 A
++constexpr float MaxSpeed = 1.0f; // output shaft rad/s
++constexpr float MaxPosition = 6.2831853f; // relative output shaft rad
++// Fill using bench measurements. Zero gains intentionally prevent arming.
++constexpr float SpeedKp = 0, SpeedKi = 0, SpeedKd = 0, SpeedIntegralLimit = 0;
++constexpr float PositionKp = 0, PositionKi = 0, PositionKd = 0, PositionIntegralLimit = 0;
++constexpr unsigned MotorFeedbackTimeoutMs = 50;
++constexpr unsigned ControlPeriodMs = 2, ImuPeriodMs = 2, AlivePeriodMs = 100;
++constexpr unsigned HeartbeatPeriodMs = 20, HeartbeatTimeoutMs = 500, StartupGraceMs = 2000;
++constexpr unsigned TemperaturePeriodMs = 200, MagneticPeriodMs = 10, InitRetryMs = 1000;
++// Control thread owns both BSP CAN receive queues. No automatic enable at boot.
++// IMU snapshots/AHRS use native axes; verify mounting and transform acc/gyro together
++// before treating these axes as vehicle body axes. IST8310 axes are separate.
++}
+diff --git a/threads/include/threads.hpp b/threads/include/threads.hpp
+index 809afee..21b9f63 100644
+--- a/threads/include/threads.hpp
++++ b/threads/include/threads.hpp
+@@ -1,10 +1,51 @@
+ #pragma once
+ #include "tx_api.h"
+-
+-// Exposed for debugger inspection; incremented by the two demo threads.
+-extern TX_SEMAPHORE heartbeat_semaphore;
+-extern volatile ULONG app_heartbeat_count;
++#include "IMU.hpp"
++#include "IST8310.hpp"
++#include "ahrs6.hpp"
++#include <cstdint>
++enum class InitState : uint8_t { Pending, Ready, Failed };
++enum class ControlState : uint8_t { Disabled, AwaitFeedback, Running, Fault };
++enum class TaskId : uint8_t { Imu, Control };
++struct ImuSnapshot {
++    acc_data_t acceleration{}; // m/s^2, native axes
++    gyro_data_t angularVelocity{}; // rad/s, native axes
++    MagneticField magneticField{}; // uT, native IST8310 axes; NOT fused
++    Attitude6 attitude{};
++    uint32_t sampleMs{}, temperatureMs{}, magneticMs{}, sequence{};
++    bool valid{}, temperatureValid{}, magneticValid{}, attitudeValid{};
++};
++struct AppHealth {
++    InitState imuInit = InitState::Pending, controlInit = InitState::Pending;
++    ControlState control = ControlState::Disabled;
++    bool imuDataOk{}, motorOnline{};
++    uint32_t imuReadErrors{}, canSendErrors{}, missedDeadlines{};
++    float motorPosition{}, motorSpeed{}, targetPosition{};
++    int16_t currentCommand{};
++};
++struct ControlCommand {
++    bool enabled{};
++    float positionRad{}; // relative OUTPUT shaft rad; referenced at each explicit arm
++    uint32_t armGeneration{};
++};
++extern TX_SEMAPHORE init_semaphore, imu_semaphore, control_semaphore;
++extern TX_MUTEX app_data_mutex;
+ extern volatile ULONG app_alive_count;
+-extern volatile UINT app_init_status;
+-extern volatile UINT app_stack_error;
+-void alive_thread_entry(ULONG input);
++extern volatile UINT app_init_status, app_stack_error;
++extern volatile bool app_imu_alive, app_control_alive;
++extern AppHealth app_health; // debugger only: application readers use GetAppHealth
++extern ImuSnapshot app_imu;
++extern ControlCommand app_control_command;
++bool GetImuSnapshot(ImuSnapshot *out); // thread context, TX_NO_WAIT; false on contention
++bool GetAppHealth(AppHealth *out);
++// Requires verified config and build switch. Fault recovery: disable -> enable.
++bool SetMotorCommand(bool enable, float positionRad);
++void AppPulse(TaskId task);
++void AppInitChanged();
++void AppSleepUntil(ULONG &deadline, ULONG period);
++constexpr ULONG AppTicks(unsigned ms) {
++    return (static_cast<ULONG>(ms) * TX_TIMER_TICKS_PER_SECOND + 999) / 1000;
++}
++void alive_thread_entry(ULONG);
++void imu_thread_entry(ULONG);
++void control_thread_entry(ULONG);
+diff --git a/threads/include/threads_internal.hpp b/threads/include/threads_internal.hpp
+new file mode 100644
+index 0000000..764e1ca
+--- /dev/null
++++ b/threads/include/threads_internal.hpp
+@@ -0,0 +1,11 @@
++#pragma once
++#include "threads.hpp"
++void AppCheck(UINT status);
++bool MotorConfigValid();
++class AppLock {
++public:
++    AppLock() { AppCheck(tx_mutex_get(&app_data_mutex, TX_WAIT_FOREVER)); }
++    ~AppLock() { AppCheck(tx_mutex_put(&app_data_mutex)); }
++    AppLock(const AppLock &) = delete;
++    AppLock &operator=(const AppLock &) = delete;
++};
+diff --git a/threads/src/alivethread.cpp b/threads/src/alivethread.cpp
+index f8d100e..2c307ea 100644
+--- a/threads/src/alivethread.cpp
++++ b/threads/src/alivethread.cpp
+@@ -1,29 +1,45 @@
+-#include "threads.hpp"
+-#include "main.h"
++#include "threads_internal.hpp"
++#include "app_config.hpp"
+ #include "LED.hpp"
+-
+-void alive_thread_entry(ULONG)
+-{
+-    for (;;)
+-    {
+-#if RM_ENABLE_HEARTBEAT_DEMO
+-        const UINT status = tx_semaphore_get(&heartbeat_semaphore,
+-                                             TX_TIMER_TICKS_PER_SECOND);
+-        if (status == TX_SUCCESS)
+-        {
+-            ++app_alive_count;
+-            LED::Set(LED::Color::Red, false);
+-            LED::Toggle(LED::Color::Green);
+-        }
+-        else
+-        {
+-            LED::Set(LED::Color::Green, false);
+-            LED::Set(LED::Color::Red, true);
+-        }
+-#else
++namespace {
++bool drain(TX_SEMAPHORE *semaphore) {
++    bool received=false;
++    for (unsigned n=0;n<16;++n) {
++        const UINT s=tx_semaphore_get(semaphore,TX_NO_WAIT);
++        if (s==TX_NO_INSTANCE) break;
++        AppCheck(s);
++        received=true;
++    }
++    return received;
++}
++}
++void alive_thread_entry(ULONG) {
++    const ULONG boot=tx_time_get();
++    ULONG imuSeen=boot, controlSeen=boot, deadline=boot;
++    bool imuEver=false, controlEver=false;
++    for (;;) {
++        const ULONG now=tx_time_get();
++        drain(&init_semaphore); // init producers update statuses, then put an event
++        if (drain(&imu_semaphore)) { imuSeen=now; imuEver=true; }
++        if (drain(&control_semaphore)) { controlSeen=now; controlEver=true; }
++        app_imu_alive=imuEver && ULONG(now-imuSeen)<AppTicks(AppConfig::HeartbeatTimeoutMs);
++        app_control_alive=controlEver && ULONG(now-controlSeen)<AppTicks(AppConfig::HeartbeatTimeoutMs);
++        AppHealth health;
++        { AppLock lock; health=app_health; }
++        const bool grace=ULONG(now-boot)<AppTicks(AppConfig::StartupGraceMs);
++        const bool fault=app_init_status!=TX_SUCCESS || app_stack_error ||
++            health.imuInit==InitState::Failed || health.controlInit==InitState::Failed ||
++            health.control==ControlState::Fault ||
++            (!grace && (!app_imu_alive || !app_control_alive || !health.imuDataOk));
++        const bool ready=!fault && app_imu_alive && app_control_alive && health.imuDataOk &&
++            health.imuInit==InitState::Ready && health.controlInit==InitState::Ready;
++        // Only alive owns runtime LED effects. Blue heartbeat: scheduler is making progress.
++        LED::Set(LED::Color::Blue,(app_alive_count%10)<2);
++        LED::Set(LED::Color::Red,fault || (!ready && (app_alive_count%4)<2));
++        LED::Set(LED::Color::Green,ready ?
++                 (health.control==ControlState::Running || (app_alive_count%10)<5) :
++                 (!fault && (app_alive_count%4)<2));
+         ++app_alive_count;
+-        LED::Toggle(LED::Color::Green);
+-        tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND / 5);
+-#endif
++        AppSleepUntil(deadline,AppTicks(AppConfig::AlivePeriodMs));
+     }
+ }
+diff --git a/threads/src/app_threadx.cpp b/threads/src/app_threadx.cpp
+index 413b213..902d530 100644
+--- a/threads/src/app_threadx.cpp
++++ b/threads/src/app_threadx.cpp
+@@ -1,79 +1,124 @@
+ #include "app_threadx.h"
+-#include "threads.hpp"
++#include "threads_internal.hpp"
++#include "app_config.hpp"
+ #include "main.h"
+ #include "LED.hpp"
+-
++#include <cmath>
+ namespace {
+ TX_BYTE_POOL thread_pool;
+-TX_THREAD alive_thread;
+-#if RM_ENABLE_HEARTBEAT_DEMO
+-TX_THREAD heartbeat_thread;
+-#endif
+-alignas(8) UCHAR pool_storage[8192];
+-constexpr ULONG alive_stack_bytes = 1024;
+-constexpr ULONG heartbeat_stack_bytes = 1024;
+-
+-void check(UINT status)
+-{
+-    if (status != TX_SUCCESS)
+-    {
+-        app_init_status = status;
+-        LED::Set(LED::Color::Red, true);
+-        Error_Handler();
+-    }
+-}
+-
+-void stack_error(TX_THREAD *)
+-{
+-    app_stack_error = 1;
+-    LED::Set(LED::Color::Red, true);
++TX_THREAD alive_thread, imu_thread, control_thread;
++alignas(8) UCHAR pool_storage[12288];
++void stack_error(TX_THREAD *) {
++    app_stack_error=1;
++    LED::Set(LED::Color::Green,false);
++    LED::Set(LED::Color::Blue,false);
++    LED::Set(LED::Color::Red,true);
+     Error_Handler();
+ }
+-
+-#if RM_ENABLE_HEARTBEAT_DEMO
+-void heartbeat_thread_entry(ULONG)
+-{
+-    for (;;)
+-    {
+-        check(tx_semaphore_put(&heartbeat_semaphore));
+-        ++app_heartbeat_count;
+-        tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND / 5);
++void create(TX_THREAD *thread,const char *name,void (*entry)(ULONG),ULONG bytes,UINT priority) {
++    void *stack=nullptr;
++    AppCheck(tx_byte_allocate(&thread_pool,&stack,bytes,TX_NO_WAIT));
++    AppCheck(tx_thread_create(thread,const_cast<CHAR *>(name),entry,0,stack,bytes,
++                             priority,priority,TX_NO_TIME_SLICE,TX_DONT_START));
++}
++ULONG last_pulse[2]{};
++}
++TX_SEMAPHORE init_semaphore, imu_semaphore, control_semaphore;
++TX_MUTEX app_data_mutex;
++AppHealth app_health;
++ImuSnapshot app_imu;
++ControlCommand app_control_command;
++volatile ULONG app_alive_count=0;
++volatile UINT app_init_status=TX_NOT_DONE, app_stack_error=0;
++volatile bool app_imu_alive=false, app_control_alive=false;
++void AppCheck(UINT status) {
++    if (status!=TX_SUCCESS) {
++        app_init_status=status;
++        LED::Set(LED::Color::Green,false);
++        LED::Set(LED::Color::Blue,false);
++        LED::Set(LED::Color::Red,true);
++        Error_Handler(); // fatal kernel-object or stack failure: preserve LED fault
+     }
+ }
++bool MotorConfigValid() {
++    using namespace AppConfig;
++    const float values[]={SpeedKp,SpeedKi,SpeedKd,SpeedIntegralLimit,PositionKp,
++                          PositionKi,PositionKd,PositionIntegralLimit,MaxSpeed,MaxPosition};
++    for (float v:values) if (!std::isfinite(v)||v<0) return false;
++    return (MotorCanBus==1||MotorCanBus==2) && MotorFeedbackId>=0x201 && MotorFeedbackId<=0x208 &&
++           CurrentLimit>0 && CurrentLimit<=10000 && MaxSpeed>0 && MaxPosition>0 &&
++           SpeedKp>0 && PositionKp>0 && SpeedIntegralLimit<=CurrentLimit &&
++           PositionIntegralLimit<=MaxSpeed && MotorFeedbackTimeoutMs>0 && MotorFeedbackTimeoutMs<=50;
++}
++bool GetImuSnapshot(ImuSnapshot *out) {
++    if (!out || app_init_status!=TX_SUCCESS || !tx_thread_identify() ||
++        tx_mutex_get(&app_data_mutex,TX_NO_WAIT)!=TX_SUCCESS) return false;
++    *out=app_imu;
++    AppCheck(tx_mutex_put(&app_data_mutex));
++    return true; // caller additionally checks valid, sampleMs and per-field validity
++}
++bool GetAppHealth(AppHealth *out) {
++    if (!out || app_init_status!=TX_SUCCESS || !tx_thread_identify() ||
++        tx_mutex_get(&app_data_mutex,TX_NO_WAIT)!=TX_SUCCESS) return false;
++    *out=app_health;
++    AppCheck(tx_mutex_put(&app_data_mutex));
++    return true;
++}
++bool SetMotorCommand(bool enable,float positionRad) {
++    if (app_init_status!=TX_SUCCESS || !tx_thread_identify() ||
++        (enable && (!std::isfinite(positionRad) || std::fabs(positionRad)>AppConfig::MaxPosition))) return false;
++#if !RM_ENABLE_MOTOR_OUTPUT
++    if (enable) return false;
+ #endif
+-} // namespace
+-
+-TX_SEMAPHORE heartbeat_semaphore;
+-volatile ULONG app_heartbeat_count = 0;
+-volatile ULONG app_alive_count = 0;
+-volatile UINT app_init_status = TX_NOT_DONE;
+-volatile UINT app_stack_error = 0;
+-
+-extern "C" void tx_application_define(void *first_unused_memory)
+-{
+-    // Static pool storage has an explicit bound; do not allocate from _end.
+-    (void)first_unused_memory;
+-    check(tx_thread_stack_error_notify(stack_error));
+-    check(tx_byte_pool_create(&thread_pool, const_cast<CHAR *>("thread stacks"),
+-                              pool_storage, sizeof(pool_storage)));
+-    check(tx_semaphore_create(&heartbeat_semaphore,
+-                              const_cast<CHAR *>("demo heartbeat"), 0));
+-    void *stack = nullptr;
+-    check(tx_byte_allocate(&thread_pool, &stack, alive_stack_bytes, TX_NO_WAIT));
+-    check(tx_thread_create(&alive_thread, const_cast<CHAR *>("alive"),
+-                           alive_thread_entry, 0, stack, alive_stack_bytes,
+-                           15, 15, TX_NO_TIME_SLICE, TX_AUTO_START));
+-#if RM_ENABLE_HEARTBEAT_DEMO
+-    check(tx_byte_allocate(&thread_pool, &stack, heartbeat_stack_bytes, TX_NO_WAIT));
+-    check(tx_thread_create(&heartbeat_thread, const_cast<CHAR *>("heartbeat demo"),
+-                           heartbeat_thread_entry, 0, stack, heartbeat_stack_bytes,
+-                           10, 10, TX_NO_TIME_SLICE, TX_AUTO_START));
+-#endif
+-    app_init_status = TX_SUCCESS;
++    AppLock lock;
++    if (enable && (!MotorConfigValid() || !app_health.motorOnline ||
++                   app_health.controlInit!=InitState::Ready ||
++                   (app_health.control==ControlState::Fault && app_control_command.enabled))) return false;
++    if (enable && !app_control_command.enabled) ++app_control_command.armGeneration;
++    app_control_command.enabled=enable;
++    app_control_command.positionRad=enable ? positionRad : 0;
++    return true;
++}
++void AppInitChanged() { AppCheck(tx_semaphore_put(&init_semaphore)); }
++void AppPulse(TaskId task) {
++    const unsigned i=task==TaskId::Imu ? 0 : 1;
++    const ULONG now=tx_time_get();
++    if (ULONG(now-last_pulse[i])>=AppTicks(AppConfig::HeartbeatPeriodMs)) {
++        AppCheck(tx_semaphore_put(i==0 ? &imu_semaphore : &control_semaphore));
++        last_pulse[i]=now;
++    }
+ }
+-
+-extern "C" void app_threadx_start(void)
+-{
++void AppSleepUntil(ULONG &deadline,ULONG period) {
++    deadline+=period;
++    const ULONG now=tx_time_get();
++    const int32_t remaining=static_cast<int32_t>(static_cast<uint32_t>(deadline-now));
++    if (remaining>0) AppCheck(tx_thread_sleep(static_cast<ULONG>(remaining)));
++    else {
++        { AppLock lock; ++app_health.missedDeadlines; }
++        deadline=now;
++        AppCheck(tx_thread_sleep(1)); // no catch-up busy loop, always yield on overrun
++    }
++}
++extern "C" void tx_application_define(void *memory) {
++    (void)memory;
++    static_assert(AppConfig::ControlPeriodMs>0 && AppConfig::ImuPeriodMs>0);
++    AppCheck(tx_thread_stack_error_notify(stack_error));
++    AppCheck(tx_byte_pool_create(&thread_pool,const_cast<CHAR *>("thread stacks"),
++                                 pool_storage,sizeof(pool_storage)));
++    AppCheck(tx_mutex_create(&app_data_mutex,const_cast<CHAR *>("app snapshots"),TX_INHERIT));
++    AppCheck(tx_semaphore_create(&init_semaphore,const_cast<CHAR *>("init events"),0));
++    AppCheck(tx_semaphore_create(&imu_semaphore,const_cast<CHAR *>("imu heartbeat"),0));
++    AppCheck(tx_semaphore_create(&control_semaphore,const_cast<CHAR *>("control heartbeat"),0));
++    create(&alive_thread,"alive",alive_thread_entry,1536,4);
++    create(&imu_thread,"imu",imu_thread_entry,4096,8);
++    create(&control_thread,"control",control_thread_entry,3072,6);
++    app_init_status=TX_SUCCESS;
++    AppInitChanged(); // reached only after main's bsp_Init succeeded
++    AppCheck(tx_thread_resume(&alive_thread));
++    AppCheck(tx_thread_resume(&imu_thread));
++    AppCheck(tx_thread_resume(&control_thread));
++}
++extern "C" void app_threadx_start(void) {
+     tx_kernel_enter();
+-    Error_Handler(); // The scheduler must not return.
++    Error_Handler();
+ }
+diff --git a/threads/src/controlthread.cpp b/threads/src/controlthread.cpp
+new file mode 100644
+index 0000000..12c7e65
+--- /dev/null
++++ b/threads/src/controlthread.cpp
+@@ -0,0 +1,103 @@
++#include "threads_internal.hpp"
++#include "app_config.hpp"
++#include "M2006.hpp"
++#include "DJIMotorHandler.hpp"
++#include "bsp_usart.hpp"
++namespace {
++void relax(M2006 &motor) {
++    motor.controlMode=DJIMotor::RELAX_MODE; motor.currentSet=0;
++    motor.speedPid.Clear(); motor.positionPid.Clear();
++}
++}
++void control_thread_entry(ULONG) {
++    // Static lifetime because the registry keeps pointers; never expose motor to another thread.
++    static M2006 motor;
++    auto *handler=DJIMotorHandler::Instance();
++    auto *bus=AppConfig::MotorCanBus==2 ? &hcan2 : &hcan1;
++    const bool registered=(AppConfig::MotorCanBus==1 || AppConfig::MotorCanBus==2) &&
++                           handler->registerMotor(&motor,bus,AppConfig::MotorFeedbackId);
++    motor.maxCurrent=AppConfig::CurrentLimit;
++    motor.offlineTimeoutMs=AppConfig::MotorFeedbackTimeoutMs;
++    motor.speedPid=PID(AppConfig::SpeedKp,AppConfig::SpeedKi,AppConfig::SpeedKd,
++                       AppConfig::CurrentLimit,AppConfig::SpeedIntegralLimit);
++    motor.positionPid=PID(AppConfig::PositionKp,AppConfig::PositionKi,AppConfig::PositionKd,
++                          AppConfig::MaxSpeed,AppConfig::PositionIntegralLimit);
++    { AppLock lock; app_health.controlInit=registered ? InitState::Ready : InitState::Failed; }
++    AppInitChanged();
++    ULONG deadline=tx_time_get(), lastLoop=deadline;
++    uint32_t generation=0;
++    bool fault=false;
++#if RM_ENABLE_MOTOR_OUTPUT
++    bool transmitted=false, abortNeeded=false, stopPending=false;
++    unsigned sendFailures=0, abortFailures=0;
++#endif
++    for (;;) {
++        const ULONG now=tx_time_get();
++        const bool late=ULONG(now-lastLoop)>AppTicks(10);
++        lastLoop=now;
++        handler->PollFeedback(); // ONE consumer for both buses, unhandledFrame can dispatch other protocols
++        const bool online=registered && motor.AliveCheck()==DJIMotor::MOTOR_ONLINE;
++        ControlCommand command;
++        { AppLock lock; command=app_control_command; }
++        ControlState state=ControlState::Disabled;
++#if RM_ENABLE_MOTOR_OUTPUT
++        const bool newArm=command.enabled && generation!=command.armGeneration;
++        if (newArm) {
++            generation=command.armGeneration;
++            fault=!registered || !MotorConfigValid() || !online || !motor.ZeroPosition();
++            sendFailures=abortFailures=0;
++            abortNeeded=true; // remove old pending commands before this new session
++        }
++        if (!command.enabled) { fault=false; relax(motor); }
++        else if (late || !online || !motor.positionValid || !MotorConfigValid()) fault=true;
++        if (command.enabled && !fault) {
++            motor.positionSet=command.positionRad;
++            motor.controlMode=DJIMotor::POS_MODE;
++            motor.setOutput(); // outer position -> bounded speed -> inner speed -> bounded current
++            state=ControlState::Running;
++        } else {
++            relax(motor);
++            state=command.enabled ? ControlState::Fault : ControlState::Disabled;
++            if (transmitted) { abortNeeded=true; stopPending=true; }
++        }
++        if (abortNeeded) {
++            const auto result=CAN_AbortPending(bus);
++            if (result==HAL_OK) { abortNeeded=false; transmitted=false; abortFailures=0; }
++            // No new nonzero frame until hardware has confirmed pending mailboxes are clear.
++            else {
++                { AppLock lock; ++app_health.canSendErrors; }
++                if (result!=HAL_BUSY || ++abortFailures>=5) fault=command.enabled;
++            }
++        }
++        if (registered && !abortNeeded && (command.enabled || stopPending)) {
++            if (fault) relax(motor);
++            const auto result=handler->sendControlData();
++            transmitted=command.enabled;
++            if (result!=HAL_OK) {
++                { AppLock lock; ++app_health.canSendErrors; }
++                if (result!=HAL_BUSY || ++sendFailures>=5) {
++                    fault=command.enabled; abortNeeded=true; relax(motor);
++                }
++            } else { sendFailures=0; stopPending=false; }
++        }
++        if (fault && command.enabled) { state=ControlState::Fault; relax(motor); }
++#else
++        (void)generation; (void)late; (void)fault;
++        relax(motor); // receive/monitor only: no CAN control transmission in default build
++#endif
++        // RX error recovery stays at BSP layer, no printf/DMA TX or blocking UART sends here.
++        (void)USART_Service(&huart1);
++        (void)USART_Service(&huart6);
++        { AppLock lock;
++          app_health.control=(!registered) ? ControlState::Fault :
++                            (!command.enabled && !online ? ControlState::AwaitFeedback : state);
++          app_health.motorOnline=online;
++          app_health.motorPosition=motor.motorFeedback.positionFdb;
++          app_health.motorSpeed=motor.motorFeedback.speedFdb;
++          app_health.targetPosition=command.positionRad;
++          app_health.currentCommand=motor.currentSet;
++        }
++        AppPulse(TaskId::Control);
++        AppSleepUntil(deadline,AppTicks(AppConfig::ControlPeriodMs));
++    }
++}
+diff --git a/threads/src/imuthread.cpp b/threads/src/imuthread.cpp
+new file mode 100644
+index 0000000..db9492f
+--- /dev/null
++++ b/threads/src/imuthread.cpp
+@@ -0,0 +1,103 @@
++#include "threads_internal.hpp"
++#include "app_config.hpp"
++#include "BMI088.hpp"
++#include "bsp_time.hpp"
++namespace {
++void setInit(InitState state) {
++    { AppLock lock; app_health.imuInit=state; app_health.imuDataOk=false;
++      app_imu.valid=false; app_imu.attitudeValid=false; app_imu.temperatureValid=false; }
++    AppInitChanged();
++}
++}
++void imu_thread_entry(ULONG) {
++    BMI088::cBMI088 bmi;
++#if RM_ENABLE_AHRS6
++    Ahrs6 ahrs;
++    uint32_t previous=0;
++    bool previousValid=false;
++#endif
++    ImuSnapshot data;
++    bool ready=false;
++    uint32_t retry=0, temp=0;
++    bool firstAttempt=true, firstTemperature=true;
++    float cachedTemperature=0;
++    unsigned failures=0;
++#if RM_ENABLE_IST8310
++    IST8310 mag;
++    bool magReady=false, firstMag=true;
++    uint32_t magRetry=0, magPoll=0;
++#endif
++    ULONG deadline=tx_time_get();
++    for (;;) {
++        uint32_t now=BSP_GetTickMs();
++        if (!ready && (firstAttempt || uint32_t(now-retry)>=AppConfig::InitRetryMs)) {
++            firstAttempt=false;
++            setInit(InitState::Pending);
++            bmi.Config(); // bounded driver delays use ThreadX sleep
++            ready=bmi.Ready(); retry=BSP_GetTickMs();
++            setInit(ready ? InitState::Ready : InitState::Failed);
++            data.valid=data.attitudeValid=data.temperatureValid=false;
++#if RM_ENABLE_AHRS6
++            previousValid=false; ahrs.Reset();
++#endif
++            firstTemperature=true; failures=0;
++            deadline=tx_time_get();
++        }
++        now=BSP_GetTickMs();
++        if (ready) {
++            acc_data_t acceleration{};
++            gyro_data_t angular{};
++            bmi.ReadAccData(&acceleration);
++            const bool accOk=bmi.LastStatus()==HAL_OK;
++            bmi.ReadGyroData(&angular);
++            const bool sampleOk=accOk && bmi.LastStatus()==HAL_OK;
++            data.valid=sampleOk;
++            if (sampleOk) {
++                data.acceleration=acceleration;
++                data.angularVelocity=angular;
++                data.sampleMs=BSP_GetTickMs(); ++data.sequence; failures=0;
++#if RM_ENABLE_AHRS6
++                const float dt=previousValid ? uint32_t(data.sampleMs-previous)*0.001f :
++                                               AppConfig::ImuPeriodMs*0.001f;
++                if (!previousValid || dt>0.05f) ahrs.Reset();
++                data.attitudeValid=ahrs.Update(acceleration.x,acceleration.y,acceleration.z,
++                    angular.x,angular.y,angular.z,dt>0.05f ? AppConfig::ImuPeriodMs*0.001f : dt);
++                if (data.attitudeValid) data.attitude=ahrs.Get();
++                previous=data.sampleMs; previousValid=true;
++#endif
++            } else {
++                data.attitudeValid=false;
++#if RM_ENABLE_AHRS6
++                previousValid=false;
++#endif
++                { AppLock lock; ++app_health.imuReadErrors; }
++                if (++failures>=3) { ready=false; retry=now; setInit(InitState::Failed); }
++            }
++            if (sampleOk && (firstTemperature || uint32_t(now-temp)>=AppConfig::TemperaturePeriodMs)) {
++                float temperature=0;
++                bmi.ReadAccTemperature(&temperature);
++                data.temperatureValid=bmi.LastStatus()==HAL_OK;
++                if (data.temperatureValid) { cachedTemperature=temperature; data.temperatureMs=BSP_GetTickMs(); }
++                temp=now; firstTemperature=false;
++            }
++            data.acceleration.temperature=cachedTemperature;
++        }
++#if RM_ENABLE_IST8310
++        if (!magReady && (firstMag || uint32_t(now-magRetry)>=AppConfig::InitRetryMs)) {
++            firstMag=false; magReady=mag.Init()==HAL_OK; magRetry=BSP_GetTickMs();
++            data.magneticValid=false;
++        }
++        if (magReady && uint32_t(now-magPoll)>=AppConfig::MagneticPeriodMs) {
++            const auto status=mag.Read(&data.magneticField); magPoll=now;
++            if (status==HAL_OK) { data.magneticValid=true; data.magneticMs=BSP_GetTickMs(); }
++            else if (status!=HAL_BUSY) { data.magneticValid=false; magReady=false; magRetry=now; }
++            else if (uint32_t(now-(data.magneticValid ? data.magneticMs : magRetry))>100) {
++                data.magneticValid=false; magReady=false; magRetry=now;
++            }
++        }
++#endif
++        { AppLock lock; app_imu=data; app_health.imuDataOk=data.valid && ready; }
++        AppPulse(TaskId::Imu); // progress heartbeat continues even when sensor is disconnected
++        AppSleepUntil(deadline,AppTicks(AppConfig::ImuPeriodMs));
++    }
++}

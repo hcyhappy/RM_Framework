@@ -46,3 +46,16 @@
 - Arm GNU13.2.1板级 Debug/Release 编译通过；默认 FLASH40020/21856 B、SRAM30472 B。额外强制链接30个模块/I²C入口成功，FLASH58532 B、SRAM30872 B，无未解析符号；此为链接测试，不运行新增模块。
 - 核对默认 Debug ELF 的11个 RTOS/HAL/CAN/UART/DMA 向量入口，均匹配实际符号。构建日志无warning/error。
 - 按用户要求未上板；未改 board.ioc、启动线程、外设中断或第三方内核。不自动初始化传感器、电机驱动或加热；采样时序、PID参数、机械原点、CAN负载和线程栈余量待硬件/threads阶段验证。
+
+## threads：监控、IMU 与单电机控制
+
+- 基线 8d42693：最新主线已有完整 modules，沿用 BMI088/IST8310/M2006，未重新应用旧 modules 补丁。
+- 将 heartbeat 演示替换为 alive/imu/control；三线程全部创建暂停，全部对象成功后 resume；优先级 4/8/6，栈 1536/4096/3072 B，12 KiB byte pool，优先级继承互斥锁。
+- 初始化事件与两项独立心跳均使用 tx_semaphore_put/get；循环绝对周期 sleep，超时也至少 sleep 1 tick。线程存活与设备健康分离，alive 独占运行灯效。
+- IMU 自动初始化与采样、带时间戳的快照、读失败有效标志、重试、温度缓存；可选 IST8310 与简化六轴重力校正默认开启，磁场不参与融合。
+- control 独占 CAN 队列、注册单个 M2006、显式使能后执行位置/速度双环；掉线/丢帧/循环超时/CAN错误锁存停机，需明确重新使能并重置相对零点。BSP 增加取消待发送邮箱接口；不能撤回已在总线上的报文。
+- 默认 RM_ENABLE_MOTOR_OUTPUT=OFF，PID 增益仍为零，不发送控制报文，不自动驱动电机、舵机或加热。实际启用步骤及原理见 docs/threads-guide.md。
+- Arm GNU 13.2.1 构建通过：Debug、Release、允许输出的 Debug（增益仍零）、关闭 IST8310/AHRS 的 Debug。最终日志无 warning/error。每项 ELF 检查 11 个关键中断向量，并确认无未解析符号。
+- 主机 UBSan 线程测试覆盖初始化创建失败不 resume、快照互斥/tick 回绕、心跳超时/LED逻辑、BMI 读取失败、双环结果/停机、发送 BUSY/取消超时、反馈掉线恢复不自动使能、AHRS 积分和重力校正；BSP/modules 及原 libs ASan/UBSan 测试通过。主机桩不模拟真实抢占/ISR时序。
+- 最终资源：Debug FLASH 73552 B，Release FLASH 43708 B，允许输出 Debug FLASH 76192 B，关闭选做 Debug FLASH 60068 B；均 SRAM 35760 B，CCM 未使用。
+- 按用户要求跳过上板。未验证物理灯效、轴映射、采样时序、栈余量、CAN断线行为或PID稳定性；不把编译/主机测试等同硬件验收。

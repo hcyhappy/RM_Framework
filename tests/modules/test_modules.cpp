@@ -18,11 +18,13 @@ uint8_t regmap[2][256]{}, mag[256]{};
 int selected = -1;
 bool failSPI = false, failI2C = false;
 unsigned spiLength = 0;
-uint16_t ledPin = 0;
+uint16_t ledPin = 0, ledOnMask = 0;
 GPIO_PinState ledState{};
 uint32_t HAL_GetTick() { return tick; }
 void HAL_Delay(uint32_t n) { tick += n; }
+#ifndef RM_THREADS_TEST
 void tx_thread_sleep(ULONG n) { tick += n; }
+#endif
 void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state) {
     if (port == &ga || port == &gb) {
         if (state == GPIO_PIN_RESET) {
@@ -34,6 +36,7 @@ void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state) {
     if (port == &gh) {
         ledPin = pin;
         ledState = state;
+        if (state == GPIO_PIN_RESET) ledOnMask |= pin; else ledOnMask &= ~pin;
     }
 }
 void HAL_GPIO_TogglePin(GPIO_TypeDef *, uint16_t pin) { ledPin = pin; }
@@ -110,6 +113,7 @@ void be(uint8_t *p, int v) {
     p[0] = u >> 8;
     p[1] = u;
 }
+#ifndef RM_THREADS_TEST
 int main() {
     regmap[0][0] = 0x1e;
     regmap[1][0] = 0x0f;
@@ -274,3 +278,5 @@ int main() {
     clockEnabled = true;
     std::cout << "Module protocol/control tests passed\n";
 }
+
+#endif

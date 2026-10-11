@@ -105,3 +105,7 @@ int HAL_TIM_GetChannelState(TIM_HandleTypeDef *, uint32_t);
 HAL_StatusTypeDef HAL_TIM_PWM_Start(TIM_HandleTypeDef *, uint32_t);
 HAL_StatusTypeDef HAL_TIM_PWM_Stop(TIM_HandleTypeDef *, uint32_t);
 }
+
+constexpr uint32_t CAN_TX_MAILBOX0=1, CAN_TX_MAILBOX1=2, CAN_TX_MAILBOX2=4;
+extern "C" HAL_StatusTypeDef HAL_CAN_AbortTxRequest(CAN_HandleTypeDef *,uint32_t);
+extern "C" uint32_t HAL_CAN_IsTxMessagePending(CAN_HandleTypeDef *,uint32_t);
