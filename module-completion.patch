@@ -1,0 +1,1975 @@
+diff --git a/bsp/include/bsp_i2c.hpp b/bsp/include/bsp_i2c.hpp
+new file mode 100644
+index 0000000..9be875c
+--- /dev/null
++++ b/bsp/include/bsp_i2c.hpp
+@@ -0,0 +1,7 @@
++#pragma once
++#include "i2c.h"
++// Bounded, blocking, thread/main-context transactions; address is unshifted 7-bit.
++HAL_StatusTypeDef I2C_ReadRegister(I2C_HandleTypeDef *, uint8_t address, uint8_t reg, uint8_t *,
++                                   uint16_t length);
++HAL_StatusTypeDef I2C_WriteRegister(I2C_HandleTypeDef *, uint8_t address, uint8_t reg,
++                                    const uint8_t *, uint16_t length);
+diff --git a/bsp/include/bsp_time.hpp b/bsp/include/bsp_time.hpp
+new file mode 100644
+index 0000000..b322785
+--- /dev/null
++++ b/bsp/include/bsp_time.hpp
+@@ -0,0 +1,3 @@
++#pragma once
++#include <cstdint>
++uint32_t BSP_GetTickMs(); // HAL TIM6 millisecond clock; unsigned subtraction handles rollover.
+diff --git a/bsp/src/bsp_i2c.cpp b/bsp/src/bsp_i2c.cpp
+new file mode 100644
+index 0000000..d9d78a1
+--- /dev/null
++++ b/bsp/src/bsp_i2c.cpp
+@@ -0,0 +1,25 @@
++#include "bsp_i2c.hpp"
++#include <cstring>
++namespace {
++bool valid(I2C_HandleTypeDef *h, uint8_t address, const uint8_t *data, uint16_t n) {
++    return ((h == &hi2c1 && h->Instance == I2C1 && __HAL_RCC_I2C1_IS_CLK_ENABLED()) ||
++            (h == &hi2c3 && h->Instance == I2C3 && __HAL_RCC_I2C3_IS_CLK_ENABLED())) &&
++           h->Init.AddressingMode == I2C_ADDRESSINGMODE_7BIT &&
++           HAL_I2C_GetState(h) == HAL_I2C_STATE_READY && address > 0 && address < 0x78 && data &&
++           n > 0 && n <= 32 && !__get_IPSR() && !__get_PRIMASK();
++}
++} // namespace
++HAL_StatusTypeDef I2C_ReadRegister(I2C_HandleTypeDef *h, uint8_t a, uint8_t reg, uint8_t *p,
++                                   uint16_t n) {
++    if (!valid(h, a, p, n))
++        return HAL_ERROR;
++    return HAL_I2C_Mem_Read(h, uint16_t(a) << 1, reg, I2C_MEMADD_SIZE_8BIT, p, n, 10);
++}
++HAL_StatusTypeDef I2C_WriteRegister(I2C_HandleTypeDef *h, uint8_t a, uint8_t reg, const uint8_t *p,
++                                    uint16_t n) {
++    if (!valid(h, a, p, n))
++        return HAL_ERROR;
++    uint8_t copy[32];
++    std::memcpy(copy, p, n);
++    return HAL_I2C_Mem_Write(h, uint16_t(a) << 1, reg, I2C_MEMADD_SIZE_8BIT, copy, n, 10);
++}
+diff --git a/bsp/src/bsp_time.cpp b/bsp/src/bsp_time.cpp
+new file mode 100644
+index 0000000..d018425
+--- /dev/null
++++ b/bsp/src/bsp_time.cpp
+@@ -0,0 +1,3 @@
++#include "bsp_time.hpp"
++#include "main.h"
++uint32_t BSP_GetTickMs() { return HAL_GetTick(); }
+diff --git a/docs/logs.md b/docs/logs.md
+index c2476cc..07fa3a8 100644
+--- a/docs/logs.md
++++ b/docs/logs.md
+@@ -34,3 +34,15 @@
+ - g++主机测试通过（ASan/UBSan；LeakSanitizer因沙箱进程访问限制关闭，不作为泄漏验证）：公式、饱和/反向积分、1万次限幅、Clear/Tuning/模式切换、异常浮点、独立逐位CRC参考及损坏报文。
+ - Arm GNU13.2.1板级Debug/Release构建通过，日志未见warning/error；Debug FLASH40020 B、Release FLASH21856 B，普通SRAM均30472 B。PID尚未接入运行控制链路，未引用函数可被链接器移除。
+ - 未上板、不启动电机或加热；闭环参数整定、实际采样周期和运行耗时待硬件验证。
++
++## 2026-10-10：module 传感器与 M2006
++
++- 基线：main 31eec5219a9cf0f3f0e3d957a5d659c6e55ff445，已合并 PID。
++- BMI088 使用生成的 SPI1/PA4/PB0：读协议统一丢弃 dummy，有限超时、CS 释放、ID 和配置有效位回读；±6g m/s²、±2000°/s 换算 rad/s、11位温度和无效值判断。陀螺仪带宽 bit7 忽略；去除他板预标定偏置。
++- M2006/C610：总线/ID 注册，CAN 队列轮询和可选其他报文分发，大端打包、反馈/回绕/36:1 输出轴单位，速度环和位置速度双环；默认 PID 尚未整定，不自动启动。离线/队列丢帧放松并取消位置参考，ZeroPosition 显式建立参考。C610 不解析温度，电流反馈保留手册原始单位。
++- 新增 IST8310：I²C1/PG6，硬复位和 ID，默认单次测量、至少5ms间隔、DRDY轮询、小端 XYZ ×0.3 µT、重触发和错误返回；STAT2 bit3 不误当溢出。HAL I²C 和毫秒时钟集中于新 BSP 包装。
++- LED 先前已实现，核对 PH10/11/12 低有效并加入模拟测试。
++- g++ + UBSan 的模块协议/控制测试通过；已有 BSP 和 libs 测试回归通过。
++- Arm GNU13.2.1板级 Debug/Release 编译通过；默认 FLASH40020/21856 B、SRAM30472 B。额外强制链接30个模块/I²C入口成功，FLASH58532 B、SRAM30872 B，无未解析符号；此为链接测试，不运行新增模块。
++- 核对默认 Debug ELF 的11个 RTOS/HAL/CAN/UART/DMA 向量入口，均匹配实际符号。构建日志无warning/error。
++- 按用户要求未上板；未改 board.ioc、启动线程、外设中断或第三方内核。不自动初始化传感器、电机驱动或加热；采样时序、PID参数、机械原点、CAN负载和线程栈余量待硬件/threads阶段验证。
+diff --git a/docs/module-guide.md b/docs/module-guide.md
+new file mode 100644
+index 0000000..30c8e5f
+--- /dev/null
++++ b/docs/module-guide.md
+@@ -0,0 +1,165 @@
++# Module 驱动与控制：BMI088、M2006、LED、IST8310
++
++## 1. 本次范围与应用补丁
++
++基线是 GitHub main 提交 `31eec5219a9cf0f3f0e3d957a5d659c6e55ff445`，已包含之前的 BSP 和 PID。本次补全模块源码、增加 I²C/毫秒时钟 BSP 包装、主机测试和说明。LED 原先已经完成，本次核对并测试，不重复替换实现。
++
++在 VS Code 终端进入仓库根目录 `D:\RM_Framework`。先确认工作区干净、之前的修改已提交。解压下载包，把 `module-completion.patch` 放在根目录，再执行：
++
++```powershell
++git status --short
++git apply --check .\module-completion.patch
++git apply .\module-completion.patch
++git diff --stat
++cd .\board
++cmake --preset Debug
++cmake --build --preset Debug
++```
++
++`git apply --check` 不修改文件；检查成功再应用。遇到检查失败，先核对所在目录和基线，不直接覆盖已有修改。本次不需要重新生成 CubeMX。新 `.cpp` 由已有 CMake GLOB 收集，先 configure 可确保加入构建。
++
++## 2. 实际板级连接
++
++下表依据当前生成的 `main.h`、`spi.c`、`i2c.c`、`gpio.c`，对应标准 RoboMaster C 板。将来换板，应改生成的配置与连接，不能只改软件名称。
++
++| 功能 | 当前连接/配置 | 驱动使用方式 |
++|---|---|---|
++| BMI088 SPI | SPI1；PB3 SCK、PB4 MISO、PA7 MOSI；Mode 3、8 bit、MSB first、2.625 MHz | HAL_SPI_TransmitReceive，10 ms 有限超时 |
++| 加速度计片选 | PA4，CS1_ACCEL，初始高 | 低选中，整段事务结束后恢复高 |
++| 陀螺仪片选 | PB0，CS1_GYRO，初始高 | 与加速度计分别控制 |
++| BMI088 数据就绪 | PC4 INT1_ACCEL、PC5 INT1_GYRO | 当前普通输入；传感器映射 DRDY，本次无 EXTI/DMA 采样线程 |
++| IST8310 I²C | I²C1：PB8 SCL、PB9 SDA，100 kHz | 7-bit 地址 0x0E，BSP 内左移为 HAL 地址 |
++| IST8310 复位 | PG6，RSTN_IST8310 | 低有效，初始化拉低 2 ms、释放后等 10 ms |
++| IST8310 DRDY | PG3 | 本次读取状态寄存器轮询，不依赖 EXTI |
++| RGB LED | PH10 蓝、PH11 绿、PH12 红 | 低电平点亮 |
++| 电机 CAN | hcan1 或 hcan2，当前均 1 Mbps | 使用之前的 CAN 接收队列和 CAN_Transmit |
++
++模块不重复调用 MX 初始化；所有 MX_* 和 bsp_Init 应先完成。阻塞 SPI/I²C 操作不能放入 ISR 或关中断区。BMI088、IST8310 由一个传感器线程持有；电机注册、反馈和控制由一个控制线程持有，注册对象生命周期应覆盖线程运行期。
++
++## 3. BMI088：SPI 协议、配置和解析
++
++`ReadReg(sensor, address, buffer, len)` 的 `len` 一律表示有效寄存器数据字节数，返回 HAL 状态。调用者不再自行丢弃 dummy。
++
++- 读地址：`address | 0x80`；写地址：`address & 0x7F`。
++- 加速度计读取：发送地址，随后额外发送一个 dummy，再发送 len 个填充字节产生时钟；接收缓冲从偏移 2 复制有效值。
++- 陀螺仪读取：发送地址后直接接收寄存器值；有效值从偏移 1 开始。
++- 写操作：发送地址和 len 个数据字节，不插入加速度计读协议的 dummy。
++- 两种读取都丢弃“发送地址时收到的字节”。加速度计在此之外还多丢弃一个 dummy，不能把两者混淆。
++
++片选跨整个事务保持低，成功、失败和超时均释放。缓冲最多 30 个有效字节；校验参数、SPI 初始化状态、时钟和调用上下文。短临界区只预约总线，不把阻塞 HAL 放进关中断区。预约仅协调 BMI088 实例，其他 SPI1 使用者也应由同一线程统一调度。
++
++`Config()` 先做一次读事务触发加速度计切换到 SPI，再软复位、等待、再次触发 SPI；校验 ACC ID 和 GYRO ID，再写配置并回读。失败时 `Ready()==false`、`INIT_ERR==true`，停止后续初始化。
++
++| 配置 | 写值 | 本实现的选择 |
++|---|---|---|
++| ACC_PWR_CONF / ACC_PWR_CTRL | 0x00 / 0x04 | Active、加速度计使能 |
++| ACC_RANGE / ACC_CONF | 0x01 / 0xAB | ±6g、800 Hz、Normal 带宽 |
++| GYRO_RANGE / GYRO_BANDWIDTH | 0x00 / 0x02 | ±2000 °/s、1000 Hz、116 Hz 带宽 |
++| GYRO_LPM1 | 0x00 | Normal |
++| DRDY 映射 | ACC INT1、GYRO INT3 | 低有效推挽；仅映射输出，未增加 MCU 中断处理 |
++
++特别注意：GYRO_BANDWIDTH bit7 只读且总为 1，因此写 0x02 后回读可为 0x82。校验忽略该位。原代码把名为 GYRO_LPM1_SUS 的 0x80 与带宽相或，并不会因此使陀螺仪休眠；该宏语义不清，但 bit7 在带宽寄存器中没有此功能。
++
++三轴数据均为低字节在前的有符号 16 位补码：
++
++```text
++acc[m/s²] = signed_raw × (6 × 9.80665 / 32768)
++gyro[rad/s] = signed_raw × (2000 × π / 180 / 32768) − 本板陀螺仪零偏
++```
++
++这些量是传感器自身轴系的加速度和角速度，不是 roll/pitch/yaw 姿态角。未做安装坐标变换、重力扣除或姿态融合。两部分独立采样，连续读取不能保证同步，也没有“每次调用必有新样本”的保证。
++
++温度是 11 位补码：`u = (MSB << 3) | (LSB >> 5)`，超过 1023 时减 2048，`T = raw × 0.125 + 23` °C。原始值 0x400 是无效温度，返回 HAL_ERROR 并保留旧输出。它的更新频率与运动数据不同。
++
++`VerifyAccData/VerifyGyroData` 检查读取通信结果，未执行芯片内建激励自检。
++
++`ReadAccData`、`ReadGyroData` 保持原有 void 接口，通过相应 DATA_ERR 和 `LastStatus()` 检查；成功才更新调用者和对象数据。温度通过 `LastStatus()` 判断。通信失败时旧数据仍在，调用者必须检查状态，不能把旧值当新测量。
++
++`Calibrate()` 只在 ThreadX 线程中执行；静止采集 1000 次、每次约 2 ms，失败或角速度过大则保留之前的零偏。不再使用其他板子的预设偏置；默认零偏为零。该过程不是完整的六面加速度校准，也不能证明传感器没有缓慢运动。
++
++`TemperatureControl()` 当前保持停用状态；TIM10/加热硬件没有完成板级配置。本次温度解析已完成，未启用加热闭环。
++
++## 4. M2006：注册、反馈、速度环和位置双环
++
++本实现针对 M2006 P36 + C610，减速比 36:1。不把 C620/M3508 的温度格式套用到 C610。
++
++`registerMotor(&motor, &hcan1, 0x201)` 接收的是反馈 CAN ID，而非数字 1。返回 bool，拒绝未知句柄、ID 越界、同槽重复占用、同一对象注册到其他槽。相同注册可重复调用。电调实际 ID 仍需在硬件上设置一致；注册并不能改变电调 ID。
++
++| 项目 | 格式/本实现单位 |
++|---|---|
++| 电机 1~4 控制 | 0x200，4 个大端 int16，8 字节 |
++| 电机 5~8 控制 | 0x1FF，4 个大端 int16，8 字节 |
++| 反馈 ID | 0x201~0x208，8 字节 |
++| bytes 0~1 | 转子编码器 0~8191，大端 |
++| bytes 2~3 | 转子速度，有符号 rpm |
++| bytes 4~5 | 转矩电流反馈，有符号原始数；保留手册原始值，不假定 A/LSB |
++| bytes 6~7 | C610 保留字节；temperatureFdb 为 NaN，不能用于温度监控 |
++| speedSet / speedFdb | 减速后输出轴 rad/s |
++| positionSet / positionFdb | 输出轴相对多圈位置 rad，无 [-π,π] 包角 |
++| currentSet | C610 电流命令原始单位；±10000 对应 ±10 A |
++
++反馈速度：`rotor_rpm × 2π / 60 / 36`。位置相邻编码器差值超过 4096 时减 8192，小于 -4096 时加 8192，再累计并按 `2π / 8192 / 36` 换算。前提是两次有效反馈之间实际转子运动小于半圈；数据丢失过多不能靠软件恢复真实圈数。
++
++首帧只建立基准，不从零编码器计算虚假转动。位置模式先在确定机械参考后调用 `ZeroPosition()`；它只是把当前输出轴位置记为零，不能自动寻找机械原点。反馈间隔超时或 BSP CAN 队列丢帧时，位置有效性取消、PID 清零、进入 RELAX；恢复后需重新明确模式，位置控制需重新建立参考。
++
++`PollFeedback()` 每总线最多取 16 帧，校验反馈 ID 和 DLC，再分配给注册电机。它是 CAN 队列消费者，不再从 HAL 中断直接调用模块。一个队列不能再由另一个线程同时消费。若总线还承载其他协议，设置 `unhandledFrame` 回调分发；未设置则未匹配报文被忽略。队列容量仍是之前的 16 帧，控制线程须及时轮询，可通过 CAN_GetStats 观察溢出。
++
++`setOutput()`：
++
++1. RELAX、离线、无注册、无有效配置或输入异常 → 零电流。
++2. SPD_MODE：速度 PID 的 ref=speedSet、fdb=输出轴 speedFdb，结果为电流命令。
++3. POS_MODE：位置 PID 计算目标速度，再送入速度 PID；位置环 maxOut 的单位是 rad/s，速度环 maxOut 的单位是电流命令。
++4. 模式变化清理两个 PID 历史，最终命令限制在 `min(maxCurrent, 10000)` 内。
++
++PID 增益默认仍为零、maxOut 默认零。代码不替你猜测实体负载的增益。根据实际任务设置 speedPid、positionPid 和 maxCurrent，先整定速度环，再整定位置环。上次 PID 的 ki/kd 是离散系数，改变控制周期必须重新换算或整定。通常控制线程周期可先固定 1 ms，但本次未测 MCU 上的真实耗时和调度抖动。
++
++`sendControlData()` 重打包各组：未注册槽为零，只发送存在电机的组，发送前再次检查在线/模式并限幅。返回 HAL_OK 表示所有所需组进入邮箱；HAL_BUSY/ERROR 是有组未成功，不表示原子地发送四组。下一周期应重新计算最新命令，不堆积旧电流报文。离线判断基于 TIM6 毫秒差值，默认 100 ms；设定范围 1~1000 ms。它在代码被调用时生效，并非独立硬件看门狗。
++
++建议后续 threads 阶段的顺序为：`PollFeedback → 模式/目标更新 → 各 motor.setOutput → sendControlData → 固定周期等待`。本次只完成 module，没有启动该线程，也没有发出电机命令。
++
++## 5. LED 与 IST8310 使用
++
++LED：`LED::Set(LED::Color::Red, true)` 点亮红灯，false 熄灭；`LED::Toggle(LED::Color::Green)` 翻转绿灯。GPIOH 未开时钟时不访问端口，非法颜色不操作引脚。LED 已在 heartbeat 中使用。
++
++IST8310 新增 `IST8310.hpp/.cpp`：
++
++```cpp
++IST8310 compass;       // 放到持久对象中，由传感器线程唯一持有
++MagneticField field;
++// MX_I2C1_Init / GPIO 初始化之后：
++const auto init_status = compass.Init();
++// 后续周期调用，仅 HAL_OK 才使用 field；HAL_BUSY 表示仍在等待单次测量。
++const auto read_status = compass.Read(&field);
++```
++
++Init 硬复位、校验 WHO_AM_I=0x10、写 CNTL1=0x01 触发单次测量。Read 等待至少 5 ms，单独读 STAT1；DRDY 未置位返回 HAL_BUSY，不提前读取 XYZ 清除就绪标志。准备好后读取 0x03~0x09，再触发下一次转换；有 DOR 或通信失败则返回错误、保留旧输出。
++
++XYZ 为小端有符号 16 位，按手册分辨率 0.3 µT/LSB 换算，输出传感器本体轴系磁场。手册还给出约 3.3 LSB/µT，两个是经过取整的标称数，不应当看成精确互逆。本实现采用 0.3。STAT2 bit3 是 INT，不是某些磁力计的 HOFL，不能因此丢弃有效样本。未做硬铁/软铁标定和航向角融合。
++
++I²C HAL 调用置于 `bsp_i2c.cpp`，检查 I²C1/3 句柄、7-bit 配置、时钟、状态、长度、上下文；读写有限超时。这里的地址参数保持未左移的 7-bit 值，避免重复左移。
++
++## 6. 验证与剩余工作
++
++已完成：Arm GNU 13.2.1 的板级 Debug/Release 编译、强制保留模块入口的额外链接检查；HAL 模拟 + UBSan 验证实际模块源码，并回归 BSP 与 libs 测试。默认演示未引用的模块仍可能被链接器移除，所以另做链接检查，不能只凭默认固件大小宣称模块已运行。
++
++主机测试覆盖 dummy、ID/配置回读（含带宽 bit7）、三轴负值和量程、温度无效值、SPI 超时后释放片选、IST 状态/单次转换/错误、注册冲突、编码器双向回绕、速度与位置双环、电流打包限幅、离线与 CAN 队列丢帧保护、报文分发和 LED 极性。
++
++Linux/WSL 安装 g++ 后可运行：
++
++```bash
++bash tests/modules/run.sh
++bash tests/libs/run.sh
++bash tests/bsp/run.sh
++cmake --preset Debug -B build/ModuleLinkCheck \
++  -DCMAKE_PROJECT_board_INCLUDE="$PWD/tests/modules/force_link.cmake"
++cmake --build build/ModuleLinkCheck
++```
++
++按约定跳过上板验证。真实 SPI/I²C 电气时序、采样新鲜度、安装方向、CAN 负载、负载下 PID、机械原点、线程周期/栈余量仍待硬件确认。线程接入和整定属于下一阶段。
++
++## 7. 资料
++
++- [Bosch BMI088 数据手册](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bmi088-ds001.pdf)，配置/温度/陀螺仪带宽/SPI 章节。
++- [DJI C610 用户手册](https://rm-static.djicdn.com/tem/17348/RoboMaster%20C610%20Brushless%20DC%20Motor%20Speed%20Controller%20User%20Guide.pdf)，CAN 消息章节。
++- [DJI M2006 产品参数](https://www.robomaster.com/en-US/products/components/detail/1277)，减速比。
++- [iSentek IST8310 原厂数据手册 v1.0 镜像](https://wiki.hshl.de/wiki/images/1/1c/IST8310_Datasheet_v1.0.pdf)，单次测量、分辨率及 STAT1/STAT2。原厂下载链接当前不可用，本次用原厂手册的镜像核对。
+diff --git a/modules/include/BMI088.hpp b/modules/include/BMI088.hpp
+index d111966..bdb4935 100644
+--- a/modules/include/BMI088.hpp
++++ b/modules/include/BMI088.hpp
+@@ -2,23 +2,22 @@
+ #define BMI088_HPP
+ 
+ #include "IMU.hpp"
++#include "spi.h"
+ 
+-namespace BMI088
+-{
++namespace BMI088 {
+ /**
+  * @enum BMI088_SENSOR
+  * @brief BMI088传感器的片选
+  * @param BMI088_CS_ACC 加速度计片选
+  * @param BMI088_CS_GYRO 陀螺仪片选
+  */
+-enum BMI088_SENSOR
+-{
++enum BMI088_SENSOR {
+     BMI088_CS_ACC = 0,
+     BMI088_CS_GYRO = 1,
+ };
+ 
+ /*---------------------------硬件连接---------------------------*/
+-// TODO: 配置 BMI088 使用的 SPI 句柄，以及加速度计和陀螺仪各自的 GPIO 片选端口、引脚。
++// SPI1, PA4 (CS1_ACCEL), PB0 (CS1_GYRO); uses generated main.h pin macros.
+ 
+ #define HEATING_RESISTANCE_TIM htim10            //< 加热电阻定时器
+ #define HEATING_RESISTANCE_CHANNEL TIM_CHANNEL_1 //< 加热电阻通道
+@@ -60,10 +59,9 @@ enum BMI088_SENSOR
+ #define TEMP_BIAS 23.0f
+ 
+ #define ACC_CONF_ADDR 0x40
+-#define ACC_CONF_RESERVED 0x01
+-#define ACC_CONF_BWP_OSR4 0x00
+-#define ACC_CONF_BWP_OSR2 0x01
+-#define ACC_CONF_BWP_NORM 0x02
++#define ACC_CONF_BWP_OSR4 0x08
++#define ACC_CONF_BWP_OSR2 0x09
++#define ACC_CONF_BWP_NORM 0x0A
+ #define ACC_CONF_ODR_12_5_Hz 0x05
+ #define ACC_CONF_ODR_25_Hz 0x06
+ #define ACC_CONF_ODR_50_Hz 0x07
+@@ -152,20 +150,11 @@ enum BMI088_SENSOR
+ #define GYRO_DRDY_OFF 0x00
+ #define GYRO_DRDY_ON 0x80
+ 
+-#define BMI088_GYRO_PRE_CALI_OFFSET_X -0.005280993487f
+-#define BMI088_GYRO_PRE_CALI_OFFSET_Y -0.000237223741f
+-#define BMI088_GYRO_PRE_CALI_OFFSET_Z -0.000647540528f
+-
+-/* pre calibrate parameter to go here */
+-#define BMI088_ACCEL_PRE_CALI_OFFSET_X 0.0038458286072392397
+-#define BMI088_ACCEL_PRE_CALI_OFFSET_Y 0.00647039594993548f
+-#define BMI088_ACCEL_PRE_CALI_OFFSET_Z 0.014968990490337293f
+-#define BMI088_ACCEL_PRE_CALI_G_NORM 9.805f
+-
+-#define IMU_ACCEL_3G_SEN 0.0008974358974f
+-#define IMU_ACCEL_6G_SEN 0.00179443359375f
+-#define IMU_ACCEL_12G_SEN 0.0035888671875f
+-#define IMU_ACCEL_24G_SEN 0.007177734375f
++// SI units: m/s^2 per LSB; standard gravity 9.80665 m/s^2.
++#define IMU_ACCEL_3G_SEN (3.0f * 9.80665f / 32768.0f)
++#define IMU_ACCEL_6G_SEN (6.0f * 9.80665f / 32768.0f)
++#define IMU_ACCEL_12G_SEN (12.0f * 9.80665f / 32768.0f)
++#define IMU_ACCEL_24G_SEN (24.0f * 9.80665f / 32768.0f)
+ 
+ #define IMU_GYRO_2000_SEN 0.00106526443603169529841533860381f
+ #define IMU_GYRO_1000_SEN 0.00053263221801584764920766930190693f
+@@ -173,47 +162,50 @@ enum BMI088_SENSOR
+ #define IMU_GYRO_250_SEN 0.00013315805450396191230191732547673f
+ #define IMU_GYRO_125_SEN 0.000066579027251980956150958662738366f
+ 
+-    class cBMI088: public cIMU
+-    {
+-    public:
+-        /**
+-         * @brief 从寄存器读取数据
+-         * @param cs 片选
+-         * @param addr 寄存器地址
+-         * @param data 数据
+-         * @param len 数据长度
+-         */
+-        void ReadReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
+-
+-        /**
+-         * @brief 写数据到寄存器
+-         * @param cs 片选
+-         * @param addr 寄存器地址
+-         * @param data 数据
+-         * @param len 数据长度
+-         */
+-        void WriteReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
+-
+-        void Config() override;
+-        void Calibrate() override;
+-
+-        void ReadAccData(acc_data_t *data) override;
+-        void ReadAccTemperature(float *temp) override;
+-        void ReadGyroData(gyro_data_t *data) override;
+-
+-        void VerifyAccChipID() override;
+-        void VerifyGyroChipID() override;
+-        void VerifyAccData() override;
+-        void VerifyGyroData() override;
+-
+-        void TemperatureControl(float target_temp) override;
+-
+-
+-
+-    private:
+-        float Gyro_offset[3]; // 陀螺仪零飘
+-    };
++class cBMI088 : public cIMU {
++  public:
++    /**
++     * @brief 从寄存器读取数据
++     * @param cs 片选
++     * @param addr 寄存器地址
++     * @param data 数据
++     * @param len 有效寄存器字节数；ReadReg 内部丢弃地址阶段返回值及 ACC dummy
++     */
++    HAL_StatusTypeDef ReadReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
++
++    /**
++     * @brief 写数据到寄存器
++     * @param cs 片选
++     * @param addr 寄存器地址
++     * @param data 数据
++     * @param len 待写数据字节数；写操作不插入 dummy
++     */
++    HAL_StatusTypeDef WriteReg(enum BMI088_SENSOR cs, uint8_t addr, const uint8_t *data,
++                               uint8_t len);
++
++    void Config() override;
++    void Calibrate() override;
++
++    void ReadAccData(acc_data_t *data) override;
++    void ReadAccTemperature(float *temp) override;
++    void ReadGyroData(gyro_data_t *data) override;
++
++    void VerifyAccChipID() override;
++    void VerifyGyroChipID() override;
++    void VerifyAccData() override;
++    void VerifyGyroData() override;
++
++    void TemperatureControl(float target_temp) override;
++
++    HAL_StatusTypeDef LastStatus() const { return status_; }
++    bool Ready() const { return ready_; }
++
++  private:
++    HAL_StatusTypeDef status_ = HAL_ERROR;
++    bool ready_ = false;
++    float Gyro_offset[3]{}; // 陀螺仪零飘
++};
+ 
+-}
++} // namespace BMI088
+ 
+ #endif // BMI088_HPP
+diff --git a/modules/include/DJIMotor.hpp b/modules/include/DJIMotor.hpp
+index 3c9061f..166e90b 100644
+--- a/modules/include/DJIMotor.hpp
++++ b/modules/include/DJIMotor.hpp
+@@ -1,11 +1,10 @@
+ #ifndef DJIMOTOR_HPP
+ #define DJIMOTOR_HPP
+ 
+-#include "pid.hpp"
+ #include "can.h"
++#include "pid.hpp"
+ 
+-enum GearBox
+-{
++enum GearBox {
+     GearBox_None = 0,  ///< 无减速箱
+     GearBox_M2006 = 1, ///< M2006减速箱
+     GearBox_M3508 = 2, ///< M3508减速箱
+@@ -18,42 +17,37 @@ enum GearBox
+  *
+  * 保留速度、位置控制所需的状态；控制计算由派生类完成。
+  */
+-class DJIMotor
+-{
+-public:
++class DJIMotor {
++  public:
+     /**
+      * @enum MotorControlModeType
+      * @brief 描述电机的不同控制模式。
+      */
+-    enum MotorControlModeType
+-    {
+-        RELAX_MODE = 0,         ///< 电机松开模式，所有输出均为0。
+-        SPD_MODE = 1,           ///< 速度模式，控制电机速度。
+-        POS_MODE = 2            ///< 位置模式，控制电机到特定位置。
++    enum MotorControlModeType {
++        RELAX_MODE = 0, ///< 电机松开模式，所有输出均为0。
++        SPD_MODE = 1,   ///< 速度模式，控制电机速度。
++        POS_MODE = 2    ///< 位置模式，控制电机到特定位置。
+     };
+ 
+-    enum MotorStateTypedef
+-    {
+-        MOTOR_OFFLINE = 0,
+-        MOTOR_ONLINE = 1
+-    };
++    enum MotorStateTypedef { MOTOR_OFFLINE = 0, MOTOR_ONLINE = 1 };
+ 
+     /**
+      * @struct MotorFeedBack
+      * @brief 电机反馈数据的结构体，包括电机的各种物理量反馈。
+      * 结构体中包含了电机的电流、速度、位置等信息，以及电机的温度等状态反馈。
+      */
+-    struct MotorFeedBack
+-    {
++    struct MotorFeedBack {
+         int16_t last_ecd;      ///< 上次电机编码器的读数
+         uint16_t ecd;          ///< 当前电机编码器的读数
+         int16_t speed_rpm;     ///< 电机的转速，单位rpm
+-        float currentFdb;    ///< 电机电流反馈
++        float currentFdb;      // C610 raw feedback units; manual does not define A/LSB    ///<
++                               // 电机电流反馈
+         float speedFdb;        ///< 电机当前速度反馈, 单位rad/s
+         float lastSpeedFdb;    ///< 上次记录的电机速度
+         float positionFdb;     ///< 电机当前位置反馈
+         float lastPositionFdb; ///< 上次记录的电机位置
+-        float temperatureFdb;  ///< 电机温度反馈
++        float
++            temperatureFdb; // C610 has no temperature field; NaN after feedback  ///< 电机温度反馈
+     };
+ 
+     MotorStateTypedef MotorState;
+@@ -62,11 +56,11 @@ public:
+     uint16_t canId;                   ///< 电机的CAN通信ID
+     CAN_HandleTypeDef *hcan;          ///< 指向电机使用的CAN接口的指针
+ 
+-    PID speedPid = PID(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, PID_POSITION); ///< TODO: 配置速度环参数
++    PID speedPid = PID(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, PID_POSITION);    ///< TODO: 配置速度环参数
+     PID positionPid = PID(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, PID_POSITION); ///< TODO: 配置位置环参数
+ 
+     float speedSet;    ///< 设定的目标速度
+-    float positionSet; ///< 设定的目标位置，范围[-Π, Π]
++    float positionSet; ///< 设定的目标位置，输出轴相对多圈角度 rad
+ 
+     int16_t currentSet;  ///< 设定的电流输出
+     uint16_t maxCurrent; ///< 最大电流限制
+@@ -75,6 +69,11 @@ public:
+     uint32_t Pre_AliveFlag;
+ 
+     GearBox gearBox;
++    bool feedbackReceived = false;
++    uint32_t feedbackTick = 0;
++    uint32_t offlineTimeoutMs = 100;
++    int64_t encoderCounts = 0;
++    bool positionValid = false; // Lost feedback requires explicit re-homing.
+     /**
+      * @brief 纯虚函数，用于设置电机输出。
+      * 必须在派生类中实现此函数。
+@@ -88,8 +87,7 @@ public:
+     /**
+      * @brief 构造函数
+      */
+-    DJIMotor()
+-    {
++    DJIMotor() {
+         controlMode = RELAX_MODE;
+ 
+         speedSet = 0;
+@@ -107,4 +105,4 @@ public:
+     }
+ };
+ 
+-#endif //DJIMOTOR_HPP
++#endif // DJIMOTOR_HPP
+diff --git a/modules/include/DJIMotorHandler.hpp b/modules/include/DJIMotorHandler.hpp
+index 6d9ce7c..508c07a 100644
+--- a/modules/include/DJIMotorHandler.hpp
++++ b/modules/include/DJIMotorHandler.hpp
+@@ -2,13 +2,13 @@
+ #define DJIMOTORHANDLER_HPP
+ 
+ #include "DJIMotor.hpp"
++#include "bsp_can.hpp"
+ 
+ /**
+  * @brief 电机控制类
+  */
+-class DJIMotorHandler
+-{
+-public:
++class DJIMotorHandler {
++  public:
+     /**
+      *@brief 使用指针数组, 2个CAN口，每个CAN口最多8个电机
+      */
+@@ -32,12 +32,17 @@ public:
+      * @param hcan CAN句柄
+      * @param canId 电机ID
+      */
+-    void registerMotor(DJIMotor *DJImotor, CAN_HandleTypeDef *hcan, uint16_t canId); // 使用指针作为参数
++    bool registerMotor(DJIMotor *DJImotor, CAN_HandleTypeDef *hcan,
++                       uint16_t canId); // 使用指针作为参数
+ 
+     /**
+      * @brief 发送控制数据
+      */
+-    void sendControlData();
++    HAL_StatusTypeDef sendControlData();
++    // Own the BSP CAN queues in one control thread; drains up to 16 frames per bus.
++    void PollFeedback();
++    // Optional dispatch for non-motor or unregistered CAN frames, in caller thread context.
++    void (*unhandledFrame)(CAN_HandleTypeDef *, const CAN_RxFrame &) = nullptr;
+ 
+     /**
+      * @brief 处理并更新电机反馈数据
+@@ -51,8 +56,11 @@ public:
+ 
+     void UpdateSensorData(DJIMotor *motor, uint8_t *can_receive_data);
+ 
+-    static DJIMotorHandler *Instance()
+-    {
++  private:
++    uint32_t previousDrops_[2]{};
++
++  public:
++    static DJIMotorHandler *Instance() {
+         static DJIMotorHandler instance;
+         return &instance;
+     }
+diff --git a/modules/include/IMU.hpp b/modules/include/IMU.hpp
+index c201cc9..b6fd2b6 100644
+--- a/modules/include/IMU.hpp
++++ b/modules/include/IMU.hpp
+@@ -15,8 +15,7 @@
+  * @param y y轴加速度
+  * @param z z轴加速度
+  */
+-typedef struct acc_data_t
+-{
++typedef struct acc_data_t {
+     float x;
+     float y;
+     float z;
+@@ -27,12 +26,11 @@ typedef struct acc_data_t
+  * @struct gyro_data_t
+  * @brief 陀螺仪数据结构体
+  * 存储陀螺仪的数据
+- * @param roll 横滚角
+- * @param pitch 俯仰角
+- * @param yaw 偏航角
++ * @param x x轴角速度，rad/s
++ * @param y y轴角速度，rad/s
++ * @param z z轴角速度，rad/s
+  */
+-typedef struct gyro_data_t
+-{
++typedef struct gyro_data_t {
+     float x;
+     float y;
+     float z;
+@@ -43,22 +41,20 @@ typedef struct gyro_data_t
+  * @brief IMU错误状态结构体
+  * 用于判断IMU是否正常
+  */
+-typedef struct imu_error_t
+-{
+-    bool ACC_CHIP_ID_ERR = true;       // 加速度计ID错误则为true
+-    bool ACC_DATA_ERR = true;          // 加速度计数据错误则为true
+-    bool GYRO_CHIP_ID_ERR = true;      // 陀螺仪ID错误则为true
+-    bool GYRO_DATA_ERR = true;         // 陀螺仪数据错误则为true
+-    bool INIT_ERR = true;              // 初始化错误则为true
+-    bool CALIBRATE_ERR = false;        // 标定错误则为true
+-    bool TEMP_CTRL_ERR = true;         // 温度控制错误则为true
++typedef struct imu_error_t {
++    bool ACC_CHIP_ID_ERR = true;  // 加速度计ID错误则为true
++    bool ACC_DATA_ERR = true;     // 加速度计数据错误则为true
++    bool GYRO_CHIP_ID_ERR = true; // 陀螺仪ID错误则为true
++    bool GYRO_DATA_ERR = true;    // 陀螺仪数据错误则为true
++    bool INIT_ERR = true;         // 初始化错误则为true
++    bool CALIBRATE_ERR = false;   // 标定错误则为true
++    bool TEMP_CTRL_ERR = true;    // 温度控制错误则为true
+ } imu_error_t;
+ 
+-class cIMU
+-{
+-public:
+-    acc_data_t acc_data;
+-    gyro_data_t gyro_data;
++class cIMU {
++  public:
++    acc_data_t acc_data{};
++    gyro_data_t gyro_data{};
+     imu_error_t self_test;
+ 
+     PID TempPid = PID(0.1f, 0.0f, 0.0f, 25000.0f, 3.0f, PID_POSITION);
+@@ -102,15 +98,13 @@ public:
+ 
+     /**
+      * @brief 验证加速度计数据
+-     * @todo 未实现
+      */
+     virtual void VerifyAccData() = 0;
+ 
+     /**
+      * @brief 验证陀螺仪数据
+-     * @todo 未实现
+      */
+     virtual void VerifyGyroData() = 0;
+ };
+ 
+-#endif //RM26_H7_IMU_HPP
++#endif // RM26_H7_IMU_HPP
+diff --git a/modules/include/IST8310.hpp b/modules/include/IST8310.hpp
+new file mode 100644
+index 0000000..18fddeb
+--- /dev/null
++++ b/modules/include/IST8310.hpp
+@@ -0,0 +1,18 @@
++#pragma once
++#include "bsp_i2c.hpp"
++struct MagneticField {
++    float x{}, y{}, z{};
++}; // microtesla, native sensor axes
++class IST8310 {
++  public:
++    HAL_StatusTypeDef Init();
++    // Nonblocking conversion polling; HAL_BUSY means not ready. Output preserved on error.
++    HAL_StatusTypeDef Read(MagneticField *field);
++    MagneticField field{};
++
++  private:
++    bool ready_ = false;
++    bool pending_ = false;
++    uint32_t triggerTick_ = 0;
++    HAL_StatusTypeDef trigger();
++};
+diff --git a/modules/include/M2006.hpp b/modules/include/M2006.hpp
+index ed6e8b1..0cbe27c 100644
+--- a/modules/include/M2006.hpp
++++ b/modules/include/M2006.hpp
+@@ -13,19 +13,24 @@
+  *
+  * 这个类实现了M2006电机的控制方法，包括输出设置等。
+  */
+-class M2006 final : public DJIMotor
+-{
+-public:
++class M2006 final : public DJIMotor {
++  public:
+     /**
+      * @brief 构造函数，初始化M2006电机控制类。
+      */
+     M2006();
++    // Explicitly re-zero at the current shaft position after initial feedback or a dropout.
++    bool ZeroPosition();
+ 
+     /**
+      * @brief 析构函数。
+      */
+     ~M2006() override = default;
+ 
++  private:
++    MotorControlModeType previousMode_ = RELAX_MODE;
++
++  public:
+     /**
+      * @brief 实现电机输出设置。
+      * 根据当前的控制模式和PID反馈调整电机输出。
+@@ -36,4 +41,4 @@ public:
+     MotorStateTypedef AliveCheck() override;
+ };
+ 
+-#endif //RM26_M2006_HPP
++#endif // RM26_M2006_HPP
+diff --git a/modules/src/BMI088.cpp b/modules/src/BMI088.cpp
+index 6f085ad..3cccf2f 100644
+--- a/modules/src/BMI088.cpp
++++ b/modules/src/BMI088.cpp
+@@ -1,231 +1,223 @@
+ #include "BMI088.hpp"
++#include "bsp_critical.hpp"
+ #include "tx_api.h"
+-#include "bsp_pwm.hpp"
+ #include <cmath>
+-
+-namespace BMI088
+-{
+-    /**
+-     * @brief BMI088 acc gyro 标定
+-     * @note 标定后的陀螺仪零偏存储在 Gyro_offset 中。
+-     * @attention 不管工作模式是blocking还是IT,标定时都是blocking模式,所以不用担心中断关闭后无法标定(RobotInit关闭了全局中断)
+-     * @attention 标定精度和等待时间有关。
+-     * @todo 将标定次数(等待时间)变为参数供设定
+-     * @section 整体流程为1.累加加速度数据计算gNrom()
+-     *                   2.累加陀螺仪数据计算零飘
+-     *                   3. 如果标定过程运动幅度过大,重新标定
+-     *                   4.保存标定参数
+-     */
+-    void cBMI088::Calibrate()
++#include <cstring>
++namespace BMI088 {
++namespace {
++bool busy = false;
++bool context() { return __get_IPSR() == 0 && __get_PRIMASK() == 0; }
++void waitMs(ULONG ms) {
++    if (tx_thread_identify())
++        tx_thread_sleep((ms * TX_TIMER_TICKS_PER_SECOND + 999) / 1000);
++    else
++        HAL_Delay(ms);
++}
++int16_t signedLE(const uint8_t *p) {
++    int32_t v = p[0] | (uint32_t(p[1]) << 8);
++    return static_cast<int16_t>(v >= 32768 ? v - 65536 : v);
++}
++HAL_StatusTypeDef transfer(BMI088_SENSOR sensor, uint8_t addr, uint8_t *data, const uint8_t *out,
++                           uint8_t n) {
++    if (!context() || (sensor != BMI088_CS_ACC && sensor != BMI088_CS_GYRO) || !n || n > 30 ||
++        addr > 0x7f || unsigned(addr) + n > 0x80 || (!data && !out) || hspi1.Instance != SPI1 ||
++        HAL_SPI_GetState(&hspi1) != HAL_SPI_STATE_READY || !__HAL_RCC_SPI1_IS_CLK_ENABLED() ||
++        !__HAL_RCC_GPIOA_IS_CLK_ENABLED() || !__HAL_RCC_GPIOB_IS_CLK_ENABLED())
++        return HAL_ERROR;
+     {
+-        const int calib_samples = 4000; // 采样次数
+-        float gyro_sum[3] = {0.0f, 0.0f, 0.0f};
+-        gyro_data_t temp_gyro;
+-
+-        // 1. 清除旧的 Offset，防止叠加
+-        Gyro_offset[0] = 0.0f;
+-        Gyro_offset[1] = 0.0f;
+-        Gyro_offset[2] = 0.0f;
+-
+-        // 2. 循环采样
+-        for (int i = 0; i < calib_samples; i++)
+-        {
+-            ReadGyroData(&temp_gyro); // 这里读取的是原始值（因为Offset已清零）
+-            gyro_sum[0] += temp_gyro.x;
+-            gyro_sum[1] += temp_gyro.y;
+-            gyro_sum[2] += temp_gyro.z;
+-            
+-            tx_thread_sleep(1); // 等待一个 ThreadX tick；实际耗时由 tick 频率决定。
+-        }
+-
+-        // 3. 计算平均值作为零偏
+-        Gyro_offset[0] = gyro_sum[0] / calib_samples;
+-        Gyro_offset[1] = gyro_sum[1] / calib_samples;
+-        Gyro_offset[2] = gyro_sum[2] / calib_samples;
+-        
+-        // 如果零偏过大（例如超过 0.1 rad/s），可能是在运动中标定的，应报错或丢弃
+-        if (fabs(Gyro_offset[0]) > 0.1f || fabs(Gyro_offset[1]) > 0.1f || fabs(Gyro_offset[2]) > 0.1f)
+-        {
+-            self_test.CALIBRATE_ERR = true;
+-            // 恢复默认值或保留上次值
+-            Gyro_offset[0] = BMI088_GYRO_PRE_CALI_OFFSET_X; 
+-            Gyro_offset[1] = BMI088_GYRO_PRE_CALI_OFFSET_Y;
+-            Gyro_offset[2] = BMI088_GYRO_PRE_CALI_OFFSET_Z;
+-        }
+-        else
+-        {
+-            self_test.CALIBRATE_ERR = false;
+-        }
++        BspCritical guard;
++        if (busy)
++            return HAL_BUSY;
++        busy = true;
+     }
+-
+-    void cBMI088::TemperatureControl(float target_temp)
++    uint8_t tx[32]{}, rx[32]{};
++    const unsigned offset = out ? 1 : (sensor == BMI088_CS_ACC ? 2 : 1);
++    tx[0] = out ? (addr & 0x7f) : (addr | 0x80);
++    if (out)
++        std::memcpy(tx + 1, out, n);
++    auto port = sensor == BMI088_CS_ACC ? CS1_ACCEL_GPIO_Port : CS1_GYRO_GPIO_Port;
++    auto pin = sensor == BMI088_CS_ACC ? CS1_ACCEL_Pin : CS1_GYRO_Pin;
++    HAL_GPIO_WritePin(port, pin, GPIO_PIN_RESET);
++    const auto status = HAL_SPI_TransmitReceive(&hspi1, tx, rx, n + offset, 10);
++    HAL_GPIO_WritePin(port, pin, GPIO_PIN_SET);
++    if (status == HAL_OK && data)
++        std::memcpy(data, rx + offset, n);
+     {
+-        // TODO: 温度读取完成后，用 TempPid 计算加热占空比并限制到 [0, 1]。
+-        // 未完成前保持加热关闭。
+-        (void)target_temp;
+-#if RM_ENABLE_IMU_HEATER
+-        PWM_SetDutyRatio(&HEATING_RESISTANCE_TIM, 0.0f, HEATING_RESISTANCE_CHANNEL);
+-#else
+-        self_test.TEMP_CTRL_ERR = true;
+-#endif
++        BspCritical guard;
++        busy = false;
+     }
+-
+-    void cBMI088::VerifyAccChipID()
+-    {
+-        uint8_t pRxData[2]; //< 读取两个字节，第一个是需要丢弃的无效字节，第二个是芯片 ID
+-
+-        ReadReg(BMI088_CS_ACC, ACC_CHIP_ID_ADDR, pRxData, 2); //< 读取加速度计chip id
+-        tx_thread_sleep(1);
+-        //< 如果chip id不等于预设值,则加速度计ID错误,初始化错误
+-        if (pRxData[1] != ACC_CHIP_ID_VAL)
+-        {
+-            self_test.ACC_CHIP_ID_ERR = true;
+-            self_test.INIT_ERR = true;
+-        }
+-        else if (pRxData[1] == ACC_CHIP_ID_VAL)
+-        {
+-            self_test.ACC_CHIP_ID_ERR = false;
+-        }
++    return status;
++}
++} // namespace
++HAL_StatusTypeDef cBMI088::ReadReg(BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len) {
++    return status_ = transfer(cs, addr, data, nullptr, len);
++}
++HAL_StatusTypeDef cBMI088::WriteReg(BMI088_SENSOR cs, uint8_t addr, const uint8_t *data,
++                                    uint8_t len) {
++    return status_ = transfer(cs, addr, nullptr, data, len);
++}
++void cBMI088::VerifyAccChipID() {
++    uint8_t id = 0;
++    self_test.ACC_CHIP_ID_ERR = ReadReg(BMI088_CS_ACC, 0, &id, 1) != HAL_OK || id != 0x1e;
++    if (self_test.ACC_CHIP_ID_ERR) {
++        ready_ = false;
++        self_test.INIT_ERR = true;
++        if (status_ == HAL_OK)
++            status_ = HAL_ERROR;
+     }
+-
+-    void cBMI088::VerifyGyroChipID()
+-    {
+-        uint8_t pRxData;                                                 //< 读取一个字节,chip id
+-        ReadReg(BMI088_CS_GYRO, GYRO_CHIP_ID_ADDR, &pRxData, 1); //< 读取陀螺仪chip id
+-        tx_thread_sleep(1);
+-        //< 如果chip id不等于预设值,则陀螺仪ID错误,初始化错误
+-        if (pRxData != GYRO_CHIP_ID_VAL)
+-        {
+-            self_test.GYRO_CHIP_ID_ERR = true;
+-            self_test.INIT_ERR = true;
+-        }
+-        else if (pRxData == GYRO_CHIP_ID_VAL)
+-        {
+-            self_test.GYRO_CHIP_ID_ERR = false;
+-        }
++}
++void cBMI088::VerifyGyroChipID() {
++    uint8_t id = 0;
++    self_test.GYRO_CHIP_ID_ERR = ReadReg(BMI088_CS_GYRO, 0, &id, 1) != HAL_OK || id != 0x0f;
++    if (self_test.GYRO_CHIP_ID_ERR) {
++        ready_ = false;
++        self_test.INIT_ERR = true;
++        if (status_ == HAL_OK)
++            status_ = HAL_ERROR;
+     }
+-
+-    void cBMI088::VerifyAccData()
+-    {
+-        // TODO: 检查加速度数据是否有效，并更新 ACC_DATA_ERR。
++}
++void cBMI088::Config() {
++    ready_ = false;
++    self_test.INIT_ERR = true;
++    self_test.ACC_DATA_ERR = self_test.GYRO_DATA_ERR = true;
++    if (!context()) {
++        status_ = HAL_ERROR;
++        return;
+     }
+-
+-    void cBMI088::VerifyGyroData()
+-    {
+-        // TODO: 检查角速度数据是否有效，并更新 GYRO_DATA_ERR。
++    waitMs(50);
++    // The first accelerometer read switches its interface from I2C to SPI.
++    uint8_t ignored;
++    if (ReadReg(BMI088_CS_ACC, 0, &ignored, 1) != HAL_OK)
++        return;
++    uint8_t reset = 0xb6;
++    if (WriteReg(BMI088_CS_ACC, 0x7e, &reset, 1) != HAL_OK)
++        return;
++    waitMs(50);
++    if (ReadReg(BMI088_CS_ACC, 0, &ignored, 1) != HAL_OK)
++        return;
++    VerifyAccChipID();
++    if (self_test.ACC_CHIP_ID_ERR) {
++        status_ = HAL_ERROR;
++        return;
+     }
+-
+-    void cBMI088::WriteReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len)
+-    {
+-        // TODO: 根据 cs 拉低对应 GPIO 片选；按 SPI 写协议发送地址和数据，
+-        // 最后释放片选，并处理通信失败与必要的延时。
+-        (void)cs;
+-        (void)addr;
+-        (void)data;
+-        (void)len;
++    if (WriteReg(BMI088_CS_GYRO, 0x14, &reset, 1) != HAL_OK)
++        return;
++    waitMs(50);
++    VerifyGyroChipID();
++    if (self_test.GYRO_CHIP_ID_ERR) {
++        status_ = HAL_ERROR;
++        return;
+     }
+-
+-    void cBMI088::ReadReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len)
+-    {
+-        // TODO: 根据 cs 拉低对应 GPIO 片选；按 SPI 读协议发送地址，
+-        // 丢弃加速度计返回的首个无效字节，读取 len 字节并释放片选。
+-        // 未实现前清零缓冲区，避免芯片 ID 校验读取未初始化数据。
+-        (void)cs;
+-        (void)addr;
+-        if (data != nullptr)
+-            for (uint8_t i = 0; i < len; ++i) data[i] = 0;
++    struct Setting {
++        BMI088_SENSOR sensor;
++        uint8_t reg, value;
++    };
++    const Setting settings[] = {
++        {BMI088_CS_ACC, 0x7c, 0x00},  {BMI088_CS_ACC, 0x7d, 0x04},  {BMI088_CS_ACC, 0x41, 0x01},
++        {BMI088_CS_ACC, 0x40, 0xab},  {BMI088_CS_ACC, 0x53, 0x08},  {BMI088_CS_ACC, 0x58, 0x04},
++        {BMI088_CS_GYRO, 0x0f, 0x00}, {BMI088_CS_GYRO, 0x10, 0x02}, {BMI088_CS_GYRO, 0x11, 0x00},
++        {BMI088_CS_GYRO, 0x15, 0x80}, {BMI088_CS_GYRO, 0x16, 0x00}, {BMI088_CS_GYRO, 0x18, 0x01}};
++    for (const auto &s : settings) {
++        if (WriteReg(s.sensor, s.reg, &s.value, 1) != HAL_OK)
++            return;
++        waitMs(5);
++        uint8_t actual;
++        if (ReadReg(s.sensor, s.reg, &actual, 1) != HAL_OK)
++            return;
++        const uint8_t mask = s.sensor == BMI088_CS_GYRO && s.reg == 0x10 ? 0x7f : 0xff;
++        if ((actual & mask) != (s.value & mask)) {
++            status_ = HAL_ERROR;
++            return;
++        }
+     }
+-
+-    void cBMI088::Config()
+-    {
+-        tx_thread_sleep(10); //< 等待系统稳定
+-
+-        /*-------------------------------------加速度计初始化-------------------------------------*/
+-        
+-        //< 先软重启，清空所有寄存器
+-        uint8_t pTxData;
+-        pTxData = ACC_SOFTRESET_VAL;
+-        WriteReg(BMI088_CS_ACC, ACC_SOFTRESET_ADDR, &pTxData, 1);
+-        tx_thread_sleep(100); //< 延时100ms,重启需要时间
+-
+-        //< 打开加速度计电源
+-        pTxData = ACC_PWR_CTRL_ON;
+-        WriteReg(BMI088_CS_ACC, ACC_PWR_CTRL_ADDR, &pTxData, 1);
+-        tx_thread_sleep(150);
+-
+-        //< 加速度计变成正常模式
+-        pTxData = ACC_PWR_CONF_ACT;
+-        WriteReg(BMI088_CS_ACC, ACC_PWR_CONF_ADDR, &pTxData, 1);
+-        tx_thread_sleep(10); //
+-
+-        //< 测量范围
+-        pTxData = ACC_RANGE_6G;
+-        WriteReg(BMI088_CS_ACC, ACC_RANGE_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = 0xAB;
+-        WriteReg(BMI088_CS_ACC, ACC_CONF_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = 0x08;
+-        WriteReg(BMI088_CS_ACC, INT1_IO_CTRL_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = 0x04;
+-        WriteReg(BMI088_CS_ACC, INT_MAP_DATA_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        /*-------------------------------------陀螺仪初始化-------------------------------------*/
+-        //< 先软重启，清空所有寄存器
+-        pTxData = GYRO_SOFTRESET_VAL;
+-        WriteReg(BMI088_CS_GYRO, GYRO_SOFTRESET_ADDR, &pTxData, 1);
+-        tx_thread_sleep(100); //< 延时100ms,重启需要时间
+-
+-        pTxData = GYRO_RANGE_2000_DEG_S;
+-        WriteReg(BMI088_CS_GYRO, GYRO_RANGE_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = GYRO_ODR_2000Hz_BANDWIDTH_230Hz | GYRO_LPM1_SUS;
+-        WriteReg(BMI088_CS_GYRO, GYRO_BANDWIDTH_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = GYRO_LPM1_NOR;
+-        WriteReg(BMI088_CS_GYRO, GYRO_LPM1_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = GYRO_DRDY_ON;
+-        WriteReg(BMI088_CS_GYRO, GYRO_INT_CTRL_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = 0x00;
+-        WriteReg(BMI088_CS_GYRO, GYRO_INT3_INT4_IO_CONF_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
+-
+-        pTxData = 0x01;
+-        WriteReg(BMI088_CS_GYRO, GYRO_INT3_INT4_IO_MAP_ADDR, &pTxData, 1);
+-        tx_thread_sleep(5); //< 延时5ms
++    waitMs(50);
++    ready_ = true;
++    self_test.INIT_ERR = false;
++    status_ = HAL_OK;
++}
++void cBMI088::ReadAccData(acc_data_t *data) {
++    self_test.ACC_DATA_ERR = true;
++    if (!data || !ready_) {
++        status_ = HAL_ERROR;
++        return;
+     }
+-
+-
+-    void cBMI088::ReadAccData(acc_data_t *data)
+-    {
+-        // TODO: 按 BMI088 加速度计 SPI 协议丢弃首个无效字节，拼接三轴有符号原始值，
+-        // 再按配置的量程换算为 m/s²，写入 data。
+-        if (data != nullptr) *data = {};
++    uint8_t raw[6];
++    if (ReadReg(BMI088_CS_ACC, 0x12, raw, 6) != HAL_OK)
++        return;
++    constexpr float scale = 6.0f * 9.80665f / 32768.0f;
++    data->x = signedLE(raw) * scale;
++    data->y = signedLE(raw + 2) * scale;
++    data->z = signedLE(raw + 4) * scale;
++    acc_data.x = data->x;
++    acc_data.y = data->y;
++    acc_data.z = data->z;
++    self_test.ACC_DATA_ERR = false;
++}
++void cBMI088::ReadGyroData(gyro_data_t *data) {
++    self_test.GYRO_DATA_ERR = true;
++    if (!data || !ready_) {
++        status_ = HAL_ERROR;
++        return;
+     }
+-
+-    void cBMI088::ReadGyroData(gyro_data_t *data)
+-    {
+-        // TODO: 读取并拼接陀螺仪三轴原始值，按配置量程换算为 rad/s，
+-        // 减去 Gyro_offset 后写入 data。
+-        if (data != nullptr) *data = {};
++    uint8_t raw[6];
++    if (ReadReg(BMI088_CS_GYRO, 2, raw, 6) != HAL_OK)
++        return;
++    constexpr float scale = 2000.0f * 0.0174532925199433f / 32768.0f;
++    data->x = signedLE(raw) * scale - Gyro_offset[0];
++    data->y = signedLE(raw + 2) * scale - Gyro_offset[1];
++    data->z = signedLE(raw + 4) * scale - Gyro_offset[2];
++    gyro_data = *data;
++    self_test.GYRO_DATA_ERR = false;
++}
++void cBMI088::ReadAccTemperature(float *temp) {
++    if (!temp || !ready_) {
++        status_ = HAL_ERROR;
++        return;
+     }
+-
+-    void cBMI088::ReadAccTemperature(float *temp)
+-    {
+-        // TODO: 丢弃加速度计读取时的首个无效字节，解析 11 位有符号温度并换算为摄氏度。
+-        if (temp != nullptr) *temp = 0.0f;
++    uint8_t raw[2];
++    if (ReadReg(BMI088_CS_ACC, 0x22, raw, 2) != HAL_OK)
++        return;
++    int value = (int(raw[0]) << 3) | (raw[1] >> 5);
++    if (value == 1024) {
++        status_ = HAL_ERROR;
++        return;
++    } // Datasheet invalid-temperature sentinel.
++    if (value >= 1024)
++        value -= 2048;
++    *temp = value * 0.125f + 23.0f;
++    acc_data.temperature = *temp;
++}
++void cBMI088::VerifyAccData() { ReadAccData(&acc_data); }
++void cBMI088::VerifyGyroData() { ReadGyroData(&gyro_data); }
++void cBMI088::Calibrate() {
++    self_test.CALIBRATE_ERR = true;
++    if (!ready_ || !context() || !tx_thread_identify())
++        return;
++    // Stationary gyro-only calibration. No offsets copied from another physical board.
++    float old[3];
++    std::memcpy(old, Gyro_offset, sizeof old);
++    std::memset(Gyro_offset, 0, sizeof Gyro_offset);
++    double sum[3]{};
++    bool good = true;
++    for (unsigned i = 0; i < 1000; ++i) {
++        gyro_data_t sample{};
++        ReadGyroData(&sample);
++        if (self_test.GYRO_DATA_ERR || std::fabs(sample.x) > 0.1f || std::fabs(sample.y) > 0.1f ||
++            std::fabs(sample.z) > 0.1f) {
++            good = false;
++            break;
++        }
++        sum[0] += sample.x;
++        sum[1] += sample.y;
++        sum[2] += sample.z;
++        waitMs(2);
+     }
+-
++    if (good) {
++        for (unsigned i = 0; i < 3; ++i)
++            Gyro_offset[i] = sum[i] / 1000;
++        self_test.CALIBRATE_ERR = false;
++    } else
++        std::memcpy(Gyro_offset, old, sizeof old);
+ }
+-
++void cBMI088::TemperatureControl(float) { self_test.TEMP_CTRL_ERR = true; } // TIM10 not configured.
++} // namespace BMI088
+diff --git a/modules/src/DJIMotorHandler.cpp b/modules/src/DJIMotorHandler.cpp
+index 11c908d..76b2864 100644
+--- a/modules/src/DJIMotorHandler.cpp
++++ b/modules/src/DJIMotorHandler.cpp
+@@ -1,37 +1,140 @@
+ #include "DJIMotorHandler.hpp"
+-
+-void DJIMotorHandler::registerMotor(DJIMotor *motor, CAN_HandleTypeDef *hcan, uint16_t canId)
+-{
+-    // TODO: 校验 CAN 句柄和 0x201~0x208 ID，再登记到对应总线与槽位。
+-    // TODO: 按 ID 设置对应的 0x200/0x1FF 报文存在标志。
+-    (void)motor;
+-    (void)hcan;
+-    (void)canId;
++#include "bsp_time.hpp"
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++#include <limits>
++namespace {
++int busIndex(CAN_HandleTypeDef *h) { return h == &hcan1 ? 0 : (h == &hcan2 ? 1 : -1); }
++int signedBE(const uint8_t *p) {
++    int v = (unsigned(p[0]) << 8) | p[1];
++    return v >= 32768 ? v - 65536 : v;
+ }
+-
+-void DJIMotorHandler::sendControlData()
+-{
+-    // TODO: 将各电机 currentSet 按大端序放入正确的 8 字节控制帧。
+-    // TODO: 仅发送包含已注册电机的报文；未完成前不发送 CAN 电流命令。
++} // namespace
++bool DJIMotorHandler::registerMotor(DJIMotor *motor, CAN_HandleTypeDef *h, uint16_t id) {
++    const int bus = busIndex(h);
++    if (!motor || bus < 0 || id < 0x201 || id > 0x208 || motor->gearBox != GearBox_M2006)
++        return false;
++    for (auto &row : DJIMotorList)
++        for (auto *registered : row)
++            if (registered == motor)
++                return motor->hcan == h && motor->canId == id;
++    if (DJIMotorList[bus][id - 0x201])
++        return false;
++    motor->hcan = h;
++    motor->canId = id;
++    DJIMotorList[bus][id - 0x201] = motor;
++    CAN1_0x200_Exist = CAN1_0x200_Exist || (bus == 0 && id <= 0x204);
++    CAN1_0x1FF_Exist = CAN1_0x1FF_Exist || (bus == 0 && id >= 0x205);
++    CAN2_0x200_Exist = CAN2_0x200_Exist || (bus == 1 && id <= 0x204);
++    CAN2_0x1FF_Exist = CAN2_0x1FF_Exist || (bus == 1 && id >= 0x205);
++    return true;
+ }
+-
+-void DJIMotorHandler::updateFeedback(CAN_HandleTypeDef *hcan, uint8_t *rx_data, int index)
+-{
+-    // TODO: 校验总线、反馈数据和索引，再找到对应电机并调用 UpdateSensorData。
+-    (void)hcan;
+-    (void)rx_data;
+-    (void)index;
++HAL_StatusTypeDef DJIMotorHandler::sendControlData() {
++    uint8_t *packets[2][2] = {{can1_send_data_0, can1_send_data_1},
++                              {can2_send_data_0, can2_send_data_1}};
++    HAL_StatusTypeDef result = HAL_OK;
++    for (int b = 0; b < 2; ++b)
++        for (int g = 0; g < 2; ++g) {
++            uint8_t *p = packets[b][g];
++            std::memset(p, 0, 8);
++            bool present = false;
++            for (int i = 0; i < 4; ++i)
++                if (auto *m = DJIMotorList[b][g * 4 + i]) {
++                    present = true;
++                    int command = 0;
++                    if (m->AliveCheck() == DJIMotor::MOTOR_ONLINE &&
++                        (m->controlMode == DJIMotor::SPD_MODE ||
++                         (m->controlMode == DJIMotor::POS_MODE && m->positionValid))) {
++                        const int limit = std::min<unsigned>(m->maxCurrent, 10000);
++                        command = std::clamp<int>(m->currentSet, -limit, limit);
++                    }
++                    const uint16_t value = static_cast<uint16_t>(command);
++                    p[i * 2] = value >> 8;
++                    p[i * 2 + 1] = value & 255;
++                }
++            if (present) {
++                auto s = CAN_Transmit(b ? &hcan2 : &hcan1, g ? 0x1ff : 0x200, p, 8);
++                if (s != HAL_OK && (result == HAL_OK || s != HAL_BUSY))
++                    result = s;
++            }
++        }
++    return result;
+ }
+-
+-void DJIMotorHandler::UpdateSensorData(DJIMotor *motor, uint8_t *can_data)
+-{
+-    // TODO: 从 CAN 数据解析编码器、转速、电流和温度。
+-    // TODO: 处理编码器回绕，并按减速比换算输出轴位置和角速度。
+-    (void)motor;
+-    (void)can_data;
++void DJIMotorHandler::PollFeedback() {
++    for (auto *h : {&hcan1, &hcan2}) {
++        const int bus = busIndex(h);
++        CAN_Stats stats{};
++        if (CAN_GetStats(h, &stats) == HAL_OK && stats.dropped != previousDrops_[bus]) {
++            previousDrops_[bus] = stats.dropped;
++            for (auto *m : DJIMotorList[bus])
++                if (m) {
++                    m->positionValid = false;
++                    m->controlMode = DJIMotor::RELAX_MODE;
++                    m->currentSet = 0;
++                    m->speedPid.Clear();
++                    m->positionPid.Clear();
++                }
++        }
++        for (unsigned i = 0; i < 16; ++i) {
++            CAN_RxFrame frame{};
++            if (CAN_Read(h, &frame) != HAL_OK)
++                break;
++            if (frame.id >= 0x201 && frame.id <= 0x208 && frame.length == 8 &&
++                DJIMotorList[busIndex(h)][frame.id - 0x201])
++                updateFeedback(h, frame.data, frame.id - 0x201);
++            else if (unhandledFrame)
++                unhandledFrame(h, frame);
++        }
++    }
+ }
+-
+-void DJIMotorHandler::AllMotorAliveCheck()
+-{
+-    // TODO: 遍历已注册电机并调用 AliveCheck。
++void DJIMotorHandler::updateFeedback(CAN_HandleTypeDef *h, uint8_t *data, int index) {
++    int bus = busIndex(h);
++    if (bus < 0 || !data || index < 0 || index >= 8)
++        return;
++    UpdateSensorData(DJIMotorList[bus][index], data);
++}
++void DJIMotorHandler::UpdateSensorData(DJIMotor *m, uint8_t *p) {
++    if (!m || !p || m->gearBox != GearBox_M2006)
++        return;
++    unsigned encoder = (unsigned(p[0]) << 8) | p[1];
++    if (encoder >= 8192)
++        return;
++    const uint32_t now = BSP_GetTickMs();
++    auto &f = m->motorFeedback;
++    const bool continuous =
++        m->feedbackReceived && uint32_t(now - m->feedbackTick) < m->offlineTimeoutMs;
++    f.last_ecd = f.ecd;
++    f.lastSpeedFdb = f.speedFdb;
++    f.lastPositionFdb = f.positionFdb;
++    if (continuous) {
++        int delta = int(encoder) - int(f.ecd);
++        if (delta > 4096)
++            delta -= 8192;
++        else if (delta < -4096)
++            delta += 8192;
++        m->encoderCounts += delta;
++    } else {
++        m->positionValid = false;
++        m->currentSet = 0;
++        m->controlMode = DJIMotor::RELAX_MODE;
++        m->speedPid.Clear();
++        m->positionPid.Clear();
++    }
++    f.ecd = encoder;
++    f.speed_rpm = signedBE(p + 2);
++    f.currentFdb = signedBE(p + 4);
++    f.speedFdb = f.speed_rpm * (6.283185307179586f / 60.0f / 36.0f);
++    f.positionFdb = double(m->encoderCounts) * (6.283185307179586 / 8192.0 / 36.0);
++    f.temperatureFdb = std::numeric_limits<float>::quiet_NaN(); // C610 bytes 6,7 are reserved.
++    m->feedbackReceived = true;
++    m->feedbackTick = now;
++    ++m->AliveFlag;
++    m->MotorState = DJIMotor::MOTOR_ONLINE;
++}
++void DJIMotorHandler::AllMotorAliveCheck() {
++    for (auto &row : DJIMotorList)
++        for (auto *m : row)
++            if (m)
++                m->AliveCheck();
+ }
+diff --git a/modules/src/IST8310.cpp b/modules/src/IST8310.cpp
+new file mode 100644
+index 0000000..355290a
+--- /dev/null
++++ b/modules/src/IST8310.cpp
+@@ -0,0 +1,78 @@
++#include "IST8310.hpp"
++#include "bsp_time.hpp"
++#include "main.h"
++#include "tx_api.h"
++namespace {
++void delay(unsigned ms) {
++    if (tx_thread_identify())
++        tx_thread_sleep((ms * TX_TIMER_TICKS_PER_SECOND + 999) / 1000);
++    else
++        HAL_Delay(ms);
++}
++int signedLE(const uint8_t *p) {
++    int v = p[0] | (unsigned(p[1]) << 8);
++    return v >= 32768 ? v - 65536 : v;
++}
++} // namespace
++HAL_StatusTypeDef IST8310::trigger() {
++    uint8_t mode = 1;
++    auto s = I2C_WriteRegister(&hi2c1, 0x0e, 0x0a, &mode, 1);
++    pending_ = s == HAL_OK;
++    if (pending_)
++        triggerTick_ = BSP_GetTickMs();
++    return s;
++}
++HAL_StatusTypeDef IST8310::Init() {
++    ready_ = pending_ = false;
++    if (__get_IPSR() || __get_PRIMASK() || !__HAL_RCC_GPIOG_IS_CLK_ENABLED())
++        return HAL_ERROR;
++    HAL_GPIO_WritePin(RSTN_IST8310_GPIO_Port, RSTN_IST8310_Pin, GPIO_PIN_RESET);
++    delay(2);
++    HAL_GPIO_WritePin(RSTN_IST8310_GPIO_Port, RSTN_IST8310_Pin, GPIO_PIN_SET);
++    delay(10);
++    uint8_t id = 0;
++    auto s = I2C_ReadRegister(&hi2c1, 0x0e, 0, &id, 1);
++    if (s != HAL_OK)
++        return s;
++    if (id != 0x10)
++        return HAL_ERROR;
++    s = trigger();
++    ready_ = s == HAL_OK;
++    return s;
++}
++HAL_StatusTypeDef IST8310::Read(MagneticField *out) {
++    if (!out || !ready_)
++        return HAL_ERROR;
++    if (!pending_) {
++        auto s = trigger();
++        return s == HAL_OK ? HAL_BUSY : s;
++    }
++    if (uint32_t(BSP_GetTickMs() - triggerTick_) < 5)
++        return HAL_BUSY;
++    uint8_t raw[8]{};
++    auto s = I2C_ReadRegister(&hi2c1, 0x0e, 0x02, raw, 1);
++    if (s != HAL_OK)
++        return s;
++    if (!(raw[0] & 1))
++        return HAL_BUSY;
++    // Data read clears DRDY; include STAT2 to complete the read sequence.
++    s = I2C_ReadRegister(&hi2c1, 0x0e, 0x03, raw + 1, 7);
++    if (s != HAL_OK) {
++        pending_ = false;
++        return s;
++    }
++    pending_ = false;
++    // DOR means a sample was overwritten. STAT2 bit3 is INT, not overflow.
++    if (raw[0] & 2) {
++        trigger();
++        return HAL_ERROR;
++    }
++    MagneticField next{signedLE(raw + 1) * 0.3f, signedLE(raw + 3) * 0.3f,
++                       signedLE(raw + 5) * 0.3f};
++    s = trigger();
++    if (s != HAL_OK)
++        return s;
++    field = next;
++    *out = next;
++    return HAL_OK;
++}
+diff --git a/modules/src/M2006.cpp b/modules/src/M2006.cpp
+index be408b6..8330528 100644
+--- a/modules/src/M2006.cpp
++++ b/modules/src/M2006.cpp
+@@ -1,21 +1,79 @@
+ #include "M2006.hpp"
+-
+-M2006::M2006()
+-{
+-    // TODO: 根据 M2006 手册设置减速比、允许电流和速度/位置环 PID 参数。
+-    // 基类初始化为松开模式、零电流；完成配置前不允许驱动电机。
++#include "bsp_time.hpp"
++#include <algorithm>
++#include <cmath>
++namespace {
++bool configured(const PID &p) {
++    return std::isfinite(p.kp) && std::isfinite(p.ki) && std::isfinite(p.kd) &&
++           std::isfinite(p.maxOut) && p.maxOut > 0 && std::isfinite(p.maxIOut) && p.maxIOut >= 0 &&
++           (p.mode == PID_POSITION || p.mode == PID_DELTA);
+ }
+-
+-void M2006::setOutput()
+-{
+-    // TODO: 分别实现松开、速度和位置模式；位置模式需要串联位置环与速度环。
+-    // TODO: 将 PID 输出限制在 maxCurrent 范围内后写入 currentSet。
+-    currentSet = 0;
++} // namespace
++M2006::M2006() {
++    gearBox = GearBox_M2006;
++    maxCurrent = 10000;
+ }
+-
+-M2006::MotorStateTypedef M2006::AliveCheck()
+-{
+-    // TODO: 比较 AliveFlag 与 Pre_AliveFlag，更新在线状态并保存本次计数。
+-    MotorState = MOTOR_OFFLINE;
++M2006::MotorStateTypedef M2006::AliveCheck() {
++    MotorState = feedbackReceived && offlineTimeoutMs > 0 && offlineTimeoutMs <= 1000 &&
++                         uint32_t(BSP_GetTickMs() - feedbackTick) < offlineTimeoutMs
++                     ? MOTOR_ONLINE
++                     : MOTOR_OFFLINE;
++    Pre_AliveFlag = AliveFlag;
++    if (MotorState == MOTOR_OFFLINE) {
++        currentSet = 0;
++        controlMode = RELAX_MODE;
++        speedPid.Clear();
++        positionPid.Clear();
++        positionValid = false;
++    }
+     return MotorState;
+ }
++bool M2006::ZeroPosition() {
++    if (AliveCheck() != MOTOR_ONLINE)
++        return false;
++    encoderCounts = 0;
++    motorFeedback.positionFdb = motorFeedback.lastPositionFdb = 0;
++    positionSet = 0;
++    positionPid.Clear();
++    speedPid.Clear();
++    positionValid = true;
++    return true;
++}
++void M2006::setOutput() {
++    currentSet = 0;
++    if (previousMode_ != controlMode) {
++        speedPid.Clear();
++        positionPid.Clear();
++        previousMode_ = controlMode;
++    }
++    if (!hcan || canId < 0x201 || canId > 0x208 || AliveCheck() != MOTOR_ONLINE ||
++        !std::isfinite(speedSet) || !std::isfinite(positionSet) ||
++        !std::isfinite(motorFeedback.speedFdb) || !std::isfinite(motorFeedback.positionFdb)) {
++        speedPid.Clear();
++        positionPid.Clear();
++        return;
++    }
++    static_assert(sizeof(int16_t) == 2);
++    if (!configured(speedPid) || (controlMode == POS_MODE && !configured(positionPid))) {
++        speedPid.Clear();
++        positionPid.Clear();
++        return;
++    }
++    const float limit = std::min<unsigned>(maxCurrent, 10000);
++    float target = speedSet;
++    if (controlMode == POS_MODE && positionValid) {
++        positionPid.ref = positionSet;
++        positionPid.fdb = motorFeedback.positionFdb;
++        positionPid.UpdateResult();
++        target = positionPid.result;
++    } else if (controlMode != SPD_MODE) {
++        speedPid.Clear();
++        positionPid.Clear();
++        return;
++    }
++    speedPid.ref = target;
++    speedPid.fdb = motorFeedback.speedFdb;
++    speedPid.UpdateResult();
++    const float command = std::clamp(speedPid.result, -limit, limit);
++    currentSet = std::isfinite(command) ? static_cast<int16_t>(command) : 0;
++}
+diff --git a/tests/modules/force_link.cmake b/tests/modules/force_link.cmake
+new file mode 100644
+index 0000000..1c811f3
+--- /dev/null
++++ b/tests/modules/force_link.cmake
+@@ -0,0 +1,35 @@
++function(force_module_link)
++ target_link_options(board PRIVATE
++ "LINKER:--undefined=_Z16I2C_ReadRegisterP17I2C_HandleTypeDefhhPht"
++ "LINKER:--undefined=_Z17I2C_WriteRegisterP17I2C_HandleTypeDefhhPKht"
++ "LINKER:--undefined=_ZN5M200610AliveCheckEv"
++ "LINKER:--undefined=_ZN5M200612ZeroPositionEv"
++ "LINKER:--undefined=_ZN5M20069setOutputEv"
++ "LINKER:--undefined=_ZN5M2006C1Ev"
++ "LINKER:--undefined=_ZN5M2006C2Ev"
++ "LINKER:--undefined=_ZN3LED3SetENS_5ColorEb"
++ "LINKER:--undefined=_ZN3LED6ToggleENS_5ColorE"
++ "LINKER:--undefined=_ZN7IST83104InitEv"
++ "LINKER:--undefined=_ZN7IST83104ReadEP13MagneticField"
++ "LINKER:--undefined=_ZN7IST83107triggerEv"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08811ReadAccDataEP10acc_data_t"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08812ReadGyroDataEP11gyro_data_t"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08813VerifyAccDataEv"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08814VerifyGyroDataEv"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08815VerifyAccChipIDEv"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08816VerifyGyroChipIDEv"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08818ReadAccTemperatureEPf"
++ "LINKER:--undefined=_ZN6BMI0887cBMI08818TemperatureControlEf"
++ "LINKER:--undefined=_ZN6BMI0887cBMI0886ConfigEv"
++ "LINKER:--undefined=_ZN6BMI0887cBMI0887ReadRegENS_13BMI088_SENSOREhPhh"
++ "LINKER:--undefined=_ZN6BMI0887cBMI0888WriteRegENS_13BMI088_SENSOREhPKhh"
++ "LINKER:--undefined=_ZN6BMI0887cBMI0889CalibrateEv"
++ "LINKER:--undefined=_ZN15DJIMotorHandler12PollFeedbackEv"
++ "LINKER:--undefined=_ZN15DJIMotorHandler13registerMotorEP8DJIMotorP17CAN_HandleTypeDeft"
++ "LINKER:--undefined=_ZN15DJIMotorHandler14updateFeedbackEP17CAN_HandleTypeDefPhi"
++ "LINKER:--undefined=_ZN15DJIMotorHandler15sendControlDataEv"
++ "LINKER:--undefined=_ZN15DJIMotorHandler16UpdateSensorDataEP8DJIMotorPh"
++ "LINKER:--undefined=_ZN15DJIMotorHandler18AllMotorAliveCheckEv"
++)
++endfunction()
++cmake_language(DEFER CALL force_module_link)
+diff --git a/tests/modules/hal_stub/can.h b/tests/modules/hal_stub/can.h
+new file mode 100644
+index 0000000..b6c718f
+--- /dev/null
++++ b/tests/modules/hal_stub/can.h
+@@ -0,0 +1,6 @@
++#pragma once
++#include "main.h"
++struct CAN_HandleTypeDef {
++    int bus;
++};
++extern CAN_HandleTypeDef hcan1, hcan2;
+diff --git a/tests/modules/hal_stub/i2c.h b/tests/modules/hal_stub/i2c.h
+new file mode 100644
+index 0000000..ff2360c
+--- /dev/null
++++ b/tests/modules/hal_stub/i2c.h
+@@ -0,0 +1,19 @@
++#pragma once
++#include "main.h"
++#define I2C1 ((void *)2)
++#define I2C3 ((void *)3)
++#define I2C_ADDRESSINGMODE_7BIT 0
++#define I2C_MEMADD_SIZE_8BIT 1
++struct I2C_HandleTypeDef {
++    void *Instance;
++    struct {
++        int AddressingMode;
++    } Init;
++};
++extern I2C_HandleTypeDef hi2c1, hi2c3;
++enum HAL_I2C_StateTypeDef { HAL_I2C_STATE_RESET, HAL_I2C_STATE_READY };
++HAL_I2C_StateTypeDef HAL_I2C_GetState(I2C_HandleTypeDef *);
++HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef *, uint16_t, uint16_t, uint16_t, uint8_t *,
++                                   uint16_t, uint32_t);
++HAL_StatusTypeDef HAL_I2C_Mem_Write(I2C_HandleTypeDef *, uint16_t, uint16_t, uint16_t, uint8_t *,
++                                    uint16_t, uint32_t);
+diff --git a/tests/modules/hal_stub/main.h b/tests/modules/hal_stub/main.h
+new file mode 100644
+index 0000000..ad3202a
+--- /dev/null
++++ b/tests/modules/hal_stub/main.h
+@@ -0,0 +1,32 @@
++#pragma once
++#include <cstdint>
++enum HAL_StatusTypeDef { HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT };
++enum GPIO_PinState { GPIO_PIN_RESET, GPIO_PIN_SET };
++inline uint32_t __get_IPSR() { return 0; }
++inline uint32_t __get_PRIMASK() { return 0; }
++inline void __disable_irq() {}
++inline void __set_PRIMASK(uint32_t) {}
++inline bool clockEnabled = true;
++#define __HAL_RCC_SPI1_IS_CLK_ENABLED() clockEnabled
++#define __HAL_RCC_GPIOA_IS_CLK_ENABLED() clockEnabled
++#define __HAL_RCC_GPIOB_IS_CLK_ENABLED() clockEnabled
++#define __HAL_RCC_GPIOG_IS_CLK_ENABLED() clockEnabled
++#define __HAL_RCC_GPIOH_IS_CLK_ENABLED() clockEnabled
++#define __HAL_RCC_I2C1_IS_CLK_ENABLED() clockEnabled
++#define __HAL_RCC_I2C3_IS_CLK_ENABLED() clockEnabled
++using GPIO_TypeDef = int;
++inline int ga, gb, gg, gh;
++#define GPIOH (&gh)
++#define CS1_ACCEL_GPIO_Port (&ga)
++#define CS1_GYRO_GPIO_Port (&gb)
++#define RSTN_IST8310_GPIO_Port (&gg)
++#define CS1_ACCEL_Pin 16
++#define CS1_GYRO_Pin 1
++#define RSTN_IST8310_Pin 64
++#define LED_B_Pin 1024
++#define LED_G_Pin 2048
++#define LED_R_Pin 4096
++void HAL_GPIO_WritePin(GPIO_TypeDef *, uint16_t, GPIO_PinState);
++void HAL_GPIO_TogglePin(GPIO_TypeDef *, uint16_t);
++void HAL_Delay(uint32_t);
++uint32_t HAL_GetTick();
+diff --git a/tests/modules/hal_stub/spi.h b/tests/modules/hal_stub/spi.h
+new file mode 100644
+index 0000000..f0be217
+--- /dev/null
++++ b/tests/modules/hal_stub/spi.h
+@@ -0,0 +1,11 @@
++#pragma once
++#include "main.h"
++#define SPI1 ((void *)1)
++struct SPI_HandleTypeDef {
++    void *Instance;
++};
++extern SPI_HandleTypeDef hspi1;
++enum HAL_SPI_StateTypeDef { HAL_SPI_STATE_RESET, HAL_SPI_STATE_READY };
++HAL_SPI_StateTypeDef HAL_SPI_GetState(SPI_HandleTypeDef *);
++HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *, uint8_t *, uint8_t *, uint16_t,
++                                          uint32_t);
+diff --git a/tests/modules/hal_stub/tx_api.h b/tests/modules/hal_stub/tx_api.h
+new file mode 100644
+index 0000000..beacf1d
+--- /dev/null
++++ b/tests/modules/hal_stub/tx_api.h
+@@ -0,0 +1,5 @@
++#pragma once
++using ULONG = unsigned long;
++#define TX_TIMER_TICKS_PER_SECOND 1000
++inline void *tx_thread_identify() { return nullptr; }
++void tx_thread_sleep(ULONG);
+diff --git a/tests/modules/run.sh b/tests/modules/run.sh
+new file mode 100644
+index 0000000..499fb84
+--- /dev/null
++++ b/tests/modules/run.sh
+@@ -0,0 +1,10 @@
++#!/usr/bin/env bash
++set -eu
++cd "$(dirname "$0")/../.."
++mkdir -p build/modules-tests
++g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-omit-frame-pointer \
++ -Itests/modules/hal_stub -Imodules/include -Ibsp/include -Ilibs/include \
++ tests/modules/test_modules.cpp modules/src/BMI088.cpp modules/src/IST8310.cpp \
++ modules/src/M2006.cpp modules/src/DJIMotorHandler.cpp modules/src/LED.cpp \
++ bsp/src/bsp_i2c.cpp bsp/src/bsp_time.cpp libs/src/pid.cpp -o build/modules-tests/test_modules
++build/modules-tests/test_modules
+diff --git a/tests/modules/test_modules.cpp b/tests/modules/test_modules.cpp
+new file mode 100644
+index 0000000..cce4c78
+--- /dev/null
++++ b/tests/modules/test_modules.cpp
+@@ -0,0 +1,276 @@
++#include "BMI088.hpp"
++#include "DJIMotorHandler.hpp"
++#include "IST8310.hpp"
++#include "LED.hpp"
++#include "M2006.hpp"
++#include "tx_api.h"
++#include <array>
++#include <cassert>
++#include <cmath>
++#include <cstring>
++#include <iostream>
++#include <vector>
++SPI_HandleTypeDef hspi1{SPI1};
++I2C_HandleTypeDef hi2c1{I2C1, {0}}, hi2c3{I2C3, {0}};
++CAN_HandleTypeDef hcan1{1}, hcan2{2};
++uint32_t tick = 0;
++uint8_t regmap[2][256]{}, mag[256]{};
++int selected = -1;
++bool failSPI = false, failI2C = false;
++unsigned spiLength = 0;
++uint16_t ledPin = 0;
++GPIO_PinState ledState{};
++uint32_t HAL_GetTick() { return tick; }
++void HAL_Delay(uint32_t n) { tick += n; }
++void tx_thread_sleep(ULONG n) { tick += n; }
++void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state) {
++    if (port == &ga || port == &gb) {
++        if (state == GPIO_PIN_RESET) {
++            assert(selected == -1);
++            selected = port == &ga ? 0 : 1;
++        } else
++            selected = -1;
++    }
++    if (port == &gh) {
++        ledPin = pin;
++        ledState = state;
++    }
++}
++void HAL_GPIO_TogglePin(GPIO_TypeDef *, uint16_t pin) { ledPin = pin; }
++HAL_SPI_StateTypeDef HAL_SPI_GetState(SPI_HandleTypeDef *) { return HAL_SPI_STATE_READY; }
++HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *, uint8_t *tx, uint8_t *rx, uint16_t n,
++                                          uint32_t) {
++    assert(selected >= 0);
++    spiLength = n;
++    if (failSPI)
++        return HAL_TIMEOUT;
++    if (tx[0] & 0x80) {
++        unsigned offset = selected == 0 ? 2 : 1;
++        rx[0] = 0xaa;
++        if (offset == 2)
++            rx[1] = 0xee;
++        for (unsigned i = offset; i < n; ++i)
++            rx[i] = regmap[selected][(tx[0] & 0x7f) + i - offset] |
++                    (selected == 1 && (tx[0] & 0x7f) + i - offset == 0x10 ? 0x80 : 0);
++    } else
++        for (unsigned i = 1; i < n; ++i)
++            regmap[selected][tx[0] + i - 1] = tx[i];
++    return HAL_OK;
++}
++HAL_I2C_StateTypeDef HAL_I2C_GetState(I2C_HandleTypeDef *) { return HAL_I2C_STATE_READY; }
++HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef *, uint16_t addr, uint16_t reg, uint16_t,
++                                   uint8_t *p, uint16_t n, uint32_t) {
++    assert(addr == 0x1c);
++    if (failI2C)
++        return HAL_TIMEOUT;
++    std::memcpy(p, mag + reg, n);
++    return HAL_OK;
++}
++HAL_StatusTypeDef HAL_I2C_Mem_Write(I2C_HandleTypeDef *, uint16_t addr, uint16_t reg, uint16_t,
++                                    uint8_t *p, uint16_t n, uint32_t) {
++    assert(addr == 0x1c);
++    if (failI2C)
++        return HAL_TIMEOUT;
++    std::memcpy(mag + reg, p, n);
++    return HAL_OK;
++}
++struct Packet {
++    int bus;
++    uint32_t id;
++    std::array<uint8_t, 8> bytes;
++};
++std::vector<Packet> packets;
++HAL_StatusTypeDef sendStatus = HAL_OK;
++HAL_StatusTypeDef CAN_Transmit(CAN_HandleTypeDef *h, uint32_t id, const uint8_t *p, uint16_t n) {
++    assert(n == 8);
++    Packet q{h->bus, id, {}};
++    std::memcpy(q.bytes.data(), p, 8);
++    packets.push_back(q);
++    return sendStatus;
++}
++std::vector<CAN_RxFrame> incoming[2];
++HAL_StatusTypeDef CAN_Read(CAN_HandleTypeDef *h, CAN_RxFrame *out) {
++    auto &q = incoming[h->bus - 1];
++    if (q.empty())
++        return HAL_BUSY;
++    *out = q.front();
++    q.erase(q.begin());
++    return HAL_OK;
++}
++uint32_t drops[2]{};
++HAL_StatusTypeDef CAN_GetStats(CAN_HandleTypeDef *h, CAN_Stats *s) {
++    *s = {0, drops[h->bus - 1], 0};
++    return HAL_OK;
++}
++unsigned unhandled = 0;
++void dispatch(CAN_HandleTypeDef *, const CAN_RxFrame &) { ++unhandled; }
++void close(float a, float b) { assert(std::fabs(a - b) < 0.0001f); }
++void be(uint8_t *p, int v) {
++    unsigned u = uint16_t(v);
++    p[0] = u >> 8;
++    p[1] = u;
++}
++int main() {
++    regmap[0][0] = 0x1e;
++    regmap[1][0] = 0x0f;
++    BMI088::cBMI088 imu;
++    uint8_t v = 0;
++    assert(imu.ReadReg(BMI088::BMI088_CS_ACC, 0, &v, 1) == HAL_OK);
++    assert(v == 0x1e && spiLength == 3 && selected == -1);
++    assert(imu.ReadReg(BMI088::BMI088_CS_GYRO, 0, &v, 1) == HAL_OK);
++    assert(v == 0x0f && spiLength == 2);
++    failSPI = true;
++    v = 77;
++    assert(imu.ReadReg(BMI088::BMI088_CS_ACC, 0, &v, 1) == HAL_TIMEOUT);
++    assert(v == 77 && selected == -1);
++    failSPI = false;
++    assert(imu.ReadReg(BMI088::BMI088_CS_ACC, 0, nullptr, 1) == HAL_ERROR);
++    imu.Config();
++    assert(imu.Ready() && !imu.self_test.INIT_ERR);
++    assert(regmap[1][0x10] == 2);
++    regmap[0][0x12] = 0;
++    regmap[0][0x13] = 0x80;
++    regmap[0][0x14] = 0;
++    regmap[0][0x15] = 0x40;
++    acc_data_t a{};
++    imu.ReadAccData(&a);
++    close(a.x, -6 * 9.80665f);
++    close(a.y, 3 * 9.80665f);
++    regmap[1][2] = 0;
++    regmap[1][3] = 0x80;
++    gyro_data_t g{};
++    imu.ReadGyroData(&g);
++    close(g.x, -2000 * 0.0174532925199433f);
++    regmap[0][0x22] = 0xff;
++    regmap[0][0x23] = 0xe0;
++    float temp = 0;
++    imu.ReadAccTemperature(&temp);
++    close(temp, 22.875f);
++    regmap[0][0x22] = 0x80;
++    regmap[0][0x23] = 0;
++    imu.ReadAccTemperature(&temp);
++    close(temp, 22.875f);
++    assert(imu.LastStatus() == HAL_ERROR);
++    failSPI = true;
++    float previous = a.x;
++    imu.ReadAccData(&a);
++    assert(imu.self_test.ACC_DATA_ERR && a.x == previous);
++    failSPI = false;
++    regmap[1][0] = 0;
++    imu.Config();
++    assert(!imu.Ready() && imu.self_test.GYRO_CHIP_ID_ERR);
++    regmap[1][0] = 0x0f;
++    IST8310 compass;
++    mag[0] = 0x10;
++    assert(compass.Init() == HAL_OK);
++    MagneticField f{7, 8, 9};
++    assert(compass.Read(&f) == HAL_BUSY);
++    tick += 5;
++    mag[2] = 1;
++    mag[3] = 100;
++    mag[4] = 0;
++    mag[5] = 0x9c;
++    mag[6] = 0xff;
++    mag[7] = 0;
++    mag[8] = 0x80;
++    mag[9] = 8;
++    assert(compass.Read(&f) == HAL_OK);
++    close(f.x, 30);
++    close(f.y, -30);
++    close(f.z, -9830.4f); // STAT2 INT is valid.
++    tick += 5;
++    failI2C = true;
++    assert(compass.Read(&f) == HAL_TIMEOUT);
++    close(f.x, 30);
++    failI2C = false;
++    tick += 5;
++    mag[2] = 3;
++    assert(compass.Read(&f) == HAL_ERROR);
++    close(f.x, 30);
++    mag[0] = 0;
++    assert(compass.Init() == HAL_ERROR);
++    DJIMotorHandler h;
++    M2006 m, other, m2;
++    assert(h.registerMotor(&m, &hcan1, 0x201));
++    assert(!h.registerMotor(&other, &hcan1, 0x201));
++    assert(!h.registerMotor(&m, &hcan2, 0x201));
++    assert(h.registerMotor(&m2, &hcan2, 0x208));
++    assert(!h.registerMotor(&other, &hcan1, 0x209));
++    uint8_t data[8]{};
++    be(data, 8190);
++    be(data + 2, -360);
++    be(data + 4, -1234);
++    data[6] = 99;
++    h.updateFeedback(&hcan1, data, 0);
++    assert(m.motorFeedback.ecd == 8190);
++    close(m.motorFeedback.speedFdb, -6.283185307f / 6);
++    close(m.motorFeedback.currentFdb, -1234);
++    assert(std::isnan(m.motorFeedback.temperatureFdb));
++    assert(m.ZeroPosition());
++    tick++;
++    be(data, 2);
++    be(data + 2, 0);
++    h.updateFeedback(&hcan1, data, 0);
++    assert(m.encoderCounts == 4);
++    be(data, 8190);
++    h.updateFeedback(&hcan1, data, 0);
++    assert(m.encoderCounts == 0);
++    m.speedPid = PID(1000, 0, 0, 10000, 0);
++    m.speedSet = 2;
++    m.controlMode = DJIMotor::SPD_MODE;
++    m.setOutput();
++    assert(m.currentSet == 2000);
++    m.positionPid = PID(10, 0, 0, 2, 0);
++    m.positionSet = 1;
++    m.controlMode = DJIMotor::POS_MODE;
++    m.setOutput();
++    assert(m.currentSet == 2000);
++    m.currentSet = -20000;
++    assert(h.sendControlData() == HAL_OK);
++    assert(packets.size() == 2);
++    assert(packets[0].id == 0x200);
++    assert(packets[0].bytes[0] == 0xd8 && packets[0].bytes[1] == 0xf0);
++    assert(packets[1].bus == 2 && packets[1].id == 0x1ff);
++    for (unsigned i = 2; i < 8; i++)
++        assert(packets[0].bytes[i] == 0);
++    tick += 101;
++    m.setOutput();
++    assert(m.currentSet == 0 && m.controlMode == DJIMotor::RELAX_MODE && !m.positionValid);
++    h.updateFeedback(&hcan1, data, 0);
++    assert(m.controlMode == DJIMotor::RELAX_MODE && !m.positionValid);
++    h.unhandledFrame = dispatch;
++    incoming[0].push_back({0x100, 8, {}});
++    incoming[0].push_back({0x201, 7, {}});
++    CAN_RxFrame rx{0x208, 8, {}};
++    be(rx.data, 123);
++    incoming[1].push_back(rx);
++    h.PollFeedback();
++    assert(unhandled == 2 && m2.motorFeedback.ecd == 123);
++    M2006 third;
++    assert(h.registerMotor(&third, &hcan1, 0x205));
++    h.updateFeedback(&hcan1, data, 4);
++    third.controlMode = DJIMotor::SPD_MODE;
++    third.currentSet = 30000;
++    packets.clear();
++    assert(h.sendControlData() == HAL_OK);
++    assert(packets.size() == 3);
++    assert(packets[1].id == 0x1ff);
++    assert(packets[1].bytes[0] == 0x27 && packets[1].bytes[1] == 0x10);
++    drops[0]++;
++    h.PollFeedback();
++    assert(third.currentSet == 0 && third.controlMode == DJIMotor::RELAX_MODE &&
++           !third.positionValid);
++    sendStatus = HAL_BUSY;
++    assert(h.sendControlData() == HAL_BUSY);
++    LED::Set(LED::Color::Red, true);
++    assert(ledPin == 4096 && ledState == GPIO_PIN_RESET);
++    LED::Set(LED::Color::Blue, false);
++    assert(ledPin == 1024 && ledState == GPIO_PIN_SET);
++    LED::Toggle(LED::Color::Green);
++    assert(ledPin == 2048);
++    clockEnabled = false;
++    LED::Set(LED::Color::Red, true);
++    assert(ledPin == 2048);
++    clockEnabled = true;
++    std::cout << "Module protocol/control tests passed\n";
++}
