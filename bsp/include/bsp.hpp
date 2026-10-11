@@ -1,20 +1,12 @@
-//
-// Created by cosmosmount on 2025/8/30.
-//
-
-#ifndef RM26_BSP_HPP
-#define RM26_BSP_HPP
-
-
+#ifndef RM_BSP_HPP
+#define RM_BSP_HPP
+#include "main.h"
 #ifdef __cplusplus
-extern  "C" {
+extern "C" {
 #endif
-
-    void bsp_Init(void);
-
+/* Call once after all MX_* initializers, with IRQs enabled. */
+HAL_StatusTypeDef bsp_Init(void);
 #ifdef __cplusplus
 }
 #endif
-
-
-#endif //RM26_BSP_HPP
+#endif

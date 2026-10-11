@@ -1,48 +1,26 @@
 #ifndef BSP_USART_HPP
 #define BSP_USART_HPP
-
-#include "main.h"
-#include "stm32f4xx_hal_uart.h"
-
-enum USART_Mode
-{
-    USART_MODE_BLOCK = 0,
-    USART_MODE_DMA = 1,
-    USART_MODE_IT = 2
-  };
-
-/**
- * @brief 初始化串口。
- */
-void USART_Init(void);
-
-/**
- * @brief 初始化串口1。
- * @note 串口1用于调试信息输出。使用DMA发送和接收。
- */
-void USART1_Init(void);
-
-/**
- * @brief 初始化串口6。
- * @note 串口6用于和裁判系统通信。使用DMA发送和接收。
- */
-void USART6_Init(void);
-
-/**
- * @brief 串口发送数据。
- * @param huart 指向串口句柄的指针
- * @param pData 发送的数据
- * @param Size 数据长度
- * @param mode 发送模式
- */
-void USART_Transmit(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size, enum USART_Mode mode);
-
-/**
- * @brief 串口接收数据。
- * @param huart 指向串口句柄的指针
- * @param pData 接收数据的缓冲区
- * @param Size 数据长度
- */
-void USART_Receive(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size);
-
-#endif //  __BSP_USART_H
+#include "usart.h"
+enum USART_Mode : uint8_t { USART_MODE_BLOCK = 0, USART_MODE_DMA = 1, USART_MODE_IT = 2 };
+struct USART_Stats {
+    uint32_t received_bytes, dropped_bytes, errors, last_error;
+    HAL_StatusTypeDef receive_status;
+};
+/* After MX_DMA_Init + MX_USART*_UART_Init. Starts 256-byte idle DMA RX. */
+HAL_StatusTypeDef USART_Init(void);
+HAL_StatusTypeDef USART1_Init(void);
+HAL_StatusTypeDef USART6_Init(void);
+/* DMA/IT copy <=256 bytes into BSP storage; caller can reuse its buffer.
+ * BLOCK uses a finite timeout, never in ISR. HAL_BUSY requires caller policy. */
+HAL_StatusTypeDef USART_Transmit(UART_HandleTypeDef *, const uint8_t *, uint16_t,
+                               USART_Mode, uint32_t timeout_ms = 100);
+/* Stop RX first. Custom persistent DMA buffer <=256 B, ordinary SRAM only.
+ * Auto-rearmed; caller must keep storage alive until StopReceive succeeds. */
+HAL_StatusTypeDef USART_Receive(UART_HandleTypeDef *, uint8_t *, uint16_t);
+HAL_StatusTypeDef USART_StopReceive(UART_HandleTypeDef *);
+/* Call periodically from the RX owner thread to retry after HAL errors. */
+HAL_StatusTypeDef USART_Service(UART_HandleTypeDef *);
+/* Nonblocking stream read: at most 256 bytes/call; ring capacity 511 bytes. */
+uint16_t USART_Read(UART_HandleTypeDef *, uint8_t *, uint16_t capacity);
+HAL_StatusTypeDef USART_GetStats(UART_HandleTypeDef *, USART_Stats *);
+#endif

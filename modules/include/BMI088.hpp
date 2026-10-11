@@ -2,23 +2,22 @@
 #define BMI088_HPP
 
 #include "IMU.hpp"
+#include "spi.h"
 
-namespace BMI088
-{
+namespace BMI088 {
 /**
  * @enum BMI088_SENSOR
  * @brief BMI088传感器的片选
  * @param BMI088_CS_ACC 加速度计片选
  * @param BMI088_CS_GYRO 陀螺仪片选
  */
-enum BMI088_SENSOR
-{
+enum BMI088_SENSOR {
     BMI088_CS_ACC = 0,
     BMI088_CS_GYRO = 1,
 };
 
 /*---------------------------硬件连接---------------------------*/
-// TODO: 配置 BMI088 使用的 SPI 句柄，以及加速度计和陀螺仪各自的 GPIO 片选端口、引脚。
+// SPI1, PA4 (CS1_ACCEL), PB0 (CS1_GYRO); uses generated main.h pin macros.
 
 #define HEATING_RESISTANCE_TIM htim10            //< 加热电阻定时器
 #define HEATING_RESISTANCE_CHANNEL TIM_CHANNEL_1 //< 加热电阻通道
@@ -60,10 +59,9 @@ enum BMI088_SENSOR
 #define TEMP_BIAS 23.0f
 
 #define ACC_CONF_ADDR 0x40
-#define ACC_CONF_RESERVED 0x01
-#define ACC_CONF_BWP_OSR4 0x00
-#define ACC_CONF_BWP_OSR2 0x01
-#define ACC_CONF_BWP_NORM 0x02
+#define ACC_CONF_BWP_OSR4 0x08
+#define ACC_CONF_BWP_OSR2 0x09
+#define ACC_CONF_BWP_NORM 0x0A
 #define ACC_CONF_ODR_12_5_Hz 0x05
 #define ACC_CONF_ODR_25_Hz 0x06
 #define ACC_CONF_ODR_50_Hz 0x07
@@ -152,20 +150,11 @@ enum BMI088_SENSOR
 #define GYRO_DRDY_OFF 0x00
 #define GYRO_DRDY_ON 0x80
 
-#define BMI088_GYRO_PRE_CALI_OFFSET_X -0.005280993487f
-#define BMI088_GYRO_PRE_CALI_OFFSET_Y -0.000237223741f
-#define BMI088_GYRO_PRE_CALI_OFFSET_Z -0.000647540528f
-
-/* pre calibrate parameter to go here */
-#define BMI088_ACCEL_PRE_CALI_OFFSET_X 0.0038458286072392397
-#define BMI088_ACCEL_PRE_CALI_OFFSET_Y 0.00647039594993548f
-#define BMI088_ACCEL_PRE_CALI_OFFSET_Z 0.014968990490337293f
-#define BMI088_ACCEL_PRE_CALI_G_NORM 9.805f
-
-#define IMU_ACCEL_3G_SEN 0.0008974358974f
-#define IMU_ACCEL_6G_SEN 0.00179443359375f
-#define IMU_ACCEL_12G_SEN 0.0035888671875f
-#define IMU_ACCEL_24G_SEN 0.007177734375f
+// SI units: m/s^2 per LSB; standard gravity 9.80665 m/s^2.
+#define IMU_ACCEL_3G_SEN (3.0f * 9.80665f / 32768.0f)
+#define IMU_ACCEL_6G_SEN (6.0f * 9.80665f / 32768.0f)
+#define IMU_ACCEL_12G_SEN (12.0f * 9.80665f / 32768.0f)
+#define IMU_ACCEL_24G_SEN (24.0f * 9.80665f / 32768.0f)
 
 #define IMU_GYRO_2000_SEN 0.00106526443603169529841533860381f
 #define IMU_GYRO_1000_SEN 0.00053263221801584764920766930190693f
@@ -173,47 +162,50 @@ enum BMI088_SENSOR
 #define IMU_GYRO_250_SEN 0.00013315805450396191230191732547673f
 #define IMU_GYRO_125_SEN 0.000066579027251980956150958662738366f
 
-    class cBMI088: public cIMU
-    {
-    public:
-        /**
-         * @brief 从寄存器读取数据
-         * @param cs 片选
-         * @param addr 寄存器地址
-         * @param data 数据
-         * @param len 数据长度
-         */
-        void ReadReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
+class cBMI088 : public cIMU {
+  public:
+    /**
+     * @brief 从寄存器读取数据
+     * @param cs 片选
+     * @param addr 寄存器地址
+     * @param data 数据
+     * @param len 有效寄存器字节数；ReadReg 内部丢弃地址阶段返回值及 ACC dummy
+     */
+    HAL_StatusTypeDef ReadReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
 
-        /**
-         * @brief 写数据到寄存器
-         * @param cs 片选
-         * @param addr 寄存器地址
-         * @param data 数据
-         * @param len 数据长度
-         */
-        void WriteReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
+    /**
+     * @brief 写数据到寄存器
+     * @param cs 片选
+     * @param addr 寄存器地址
+     * @param data 数据
+     * @param len 待写数据字节数；写操作不插入 dummy
+     */
+    HAL_StatusTypeDef WriteReg(enum BMI088_SENSOR cs, uint8_t addr, const uint8_t *data,
+                               uint8_t len);
 
-        void Config() override;
-        void Calibrate() override;
+    void Config() override;
+    void Calibrate() override;
 
-        void ReadAccData(acc_data_t *data) override;
-        void ReadAccTemperature(float *temp) override;
-        void ReadGyroData(gyro_data_t *data) override;
+    void ReadAccData(acc_data_t *data) override;
+    void ReadAccTemperature(float *temp) override;
+    void ReadGyroData(gyro_data_t *data) override;
 
-        void VerifyAccChipID() override;
-        void VerifyGyroChipID() override;
-        void VerifyAccData() override;
-        void VerifyGyroData() override;
+    void VerifyAccChipID() override;
+    void VerifyGyroChipID() override;
+    void VerifyAccData() override;
+    void VerifyGyroData() override;
 
-        void TemperatureControl(float target_temp) override;
+    void TemperatureControl(float target_temp) override;
 
+    HAL_StatusTypeDef LastStatus() const { return status_; }
+    bool Ready() const { return ready_; }
 
+  private:
+    HAL_StatusTypeDef status_ = HAL_ERROR;
+    bool ready_ = false;
+    float Gyro_offset[3]{}; // 陀螺仪零飘
+};
 
-    private:
-        float Gyro_offset[3]; // 陀螺仪零飘
-    };
-
-}
+} // namespace BMI088
 
 #endif // BMI088_HPP

@@ -1,0 +1,512 @@
+diff --git a/docs/libs-pid.md b/docs/libs-pid.md
+new file mode 100644
+index 0000000..0767df8
+--- /dev/null
++++ b/docs/libs-pid.md
+@@ -0,0 +1,171 @@
++# libs：PID、CRC 与基础数值函数
++
++## 基线与完成范围
++
++基于 `hcyhappy/RM_Framework` 的 main `474cef570bb2502bb4fff265851e86fbdfaa1219`，已经包含前一步 BSP。
++
++- 补全 PID_POSITION 和 PID_DELTA。
++- 两种模式都限制累计积分贡献与最终输出。
++- 保留构造、Tuning、UpdateResult、Clear 接口；新增 GetIntegralOutput 观察累计积分。
++- 保留 CRC8/CRC16 表、正常输入的算法结果、校验字节顺序和原有最短报文约束，补充空指针保护。
++- 保留 Numeric::LimitABS，补充异常数值和非法限幅保护。
++
++libs 不包含 HAL 和 ThreadX 调用，可以独立在主机测试。本次不设置电机 PID 参数，也不启动电机闭环或 IMU 加热。
++
++## 1. PID 的误差与三个分量
++
++每次 UpdateResult 表示一个控制采样周期，误差为 `e[k] = ref - fdb`。
++
++| 字段 | 含义 |
++|---|---|
++| ref / fdb | 目标值 / 测量反馈 |
++| err[0] | 本次误差 e[k] |
++| err[1] | 上次误差 e[k-1] |
++| err[2] | 上上次误差 e[k-2] |
++| kp / ki / kd | 当前离散采样周期下的增益 |
++| maxOut | 最终控制输出的绝对值上限 |
++| maxIOut | 累计积分贡献的绝对值上限 |
++
++P 对当前偏差立即反应；I 积累长期偏差，帮助消除稳态误差；D 对误差变化反应，也容易放大测量噪声。负增益允许用于特殊控制方向，但实际系统必须检查反馈极性。
++
++这里的“位置式”指计算形式，不代表只能控制电机位置；位置式也可以用于速度环、温度环。
++
++## 2. 位置式计算
++
++记 `clip(x,L)` 为把x限制到[-L,+L]：
++
++```text
++P[k] = kp × e[k]
++I[k] = clip(I[k-1] + ki × e[k], maxIOut)
++D[k] = kd × (e[k] - e[k-1])
++u[k] = clip(P[k] + I[k] + D[k], maxOut)
++```
++
++当前模式下：pResult=P，iResult=累计I，dResult=D，result=最终u。积分限的是已经乘增益后的输出贡献，不是裸误差和，也不是结果的占空比。
++
++例如只有ki=2、maxIOut=3，连续误差1时累计积分为2、3、3；误差反向为-1时变成1、-1、-3。每次使用已限幅的积分状态，不在隐藏变量中继续无限积累。
++
++## 3. 增量式计算
++
++把相邻两次位置式相减，在没有输出截断等差异时可以得到：
++
++```text
++ΔP[k] = kp × (e[k] - e[k-1])
++ΔD[k] = kd × (e[k] - 2×e[k-1] + e[k-2])
++I[k]  = clip(I[k-1] + ki × e[k], maxIOut)
++ΔI[k] = I[k] - I[k-1]
++u[k]  = clip(u[k-1] + ΔP[k] + ΔI[k] + ΔD[k], maxOut)
++```
++
++未触及积分上限时，ΔI就是ki×e。触及上限后，用真实允许的积分变化量，避免继续把已经被积分限幅禁止的贡献加到输出。
++
++**字段语义区别：**增量式的pResult、iResult、dResult是本次增量；result仍是累计后的最终输出。两种模式都通过GetIntegralOutput取得累计I。
++
++不能用 `abs(iResult) <= maxIOut` 检查增量式积分是否合规。例如累计I从+3变到-3，本次ΔI为-6；累计I始终在[-3,+3]内，但增量可以达到两倍上限。
++
++增量式不能只返回Δu给执行器，执行器通常需要累计的result。也不能在外部再把result累加一次。
++
++## 4. 限幅与饱和的边界
++
++- 输出限幅保证result在[-maxOut,+maxOut]。
++- 积分限幅保证GetIntegralOutput在[-maxIOut,+maxIOut]。
++- maxOut=0表示最终输出锁为0；maxIOut=0表示禁用积分贡献。
++- 负数、NaN、Infinity不是合法上限，不会取绝对值或悄悄放开限制。
++
++这是积分限幅方案，不是完整的条件积分或反算抗饱和。若maxIOut远大于执行器能力，积分仍可在这个有限范围内积累，造成恢复延迟。将来应结合电机电流上限、实际执行器饱和和模式切换设计控制保护。
++
++没有输出饱和时，两个模式可按相同误差序列得到一致结果；增量式使用上一轮已经截断的输出，饱和以后不保证与位置式完全等价。例如纯P、kp=10、maxOut=5，误差1后改为0：位置式回到0，增量式可能到-5。这不是随机误差，是截断后的状态差异。
++
++计算使用double中间量，防止大但有限的增益乘误差在限幅之前发生float溢出。最终状态仍为float。极端情况下pResult/dResult等诊断分量会限制到float可表示范围；最终输出用未截断的double分量计算，不能拿这些诊断字段重新求和代替result。
++
++Cortex-M4的FPU主要支持单精度，double计算会引入软件运算开销。代码目前优先保证边界行为；实际高频闭环应测量UpdateResult耗时，而不是仅凭编译成功判断满足实时要求。
++
++## 5. 控制周期必须固定
++
++UpdateResult不读取时间，不自动乘除dt。若从连续PID参数转换，固定采样周期Ts（秒）时通常：
++
++```text
++kp = Kp
++ki = Ki × Ts
++kd = Kd / Ts
++```
++
++例如从1ms改成10ms采样，通常不能原封不动沿用ki、kd。当前代码中的ki、kd是离散系数，既有参数也必须按其原本定义理解。
++
++后续控制线程应按明确周期调用，不能让UART/CAN消息频率随意决定PID积分时间。不要用任意HAL_Delay忙等替代RTOS的周期与同步设计。
++
++## 6. 状态清理、调参与错误输入
++
++Clear保持原有行为：清除ref、fdb、误差历史、三个分量、最终输出和累计积分；保留增益、上限和mode。调用后需要重新填写目标和反馈。
++
++有效Tuning更新三个增益但不清状态；输入任一增益非有限时，整组调参被拒绝，原增益保持不变。调参和切换模式不提供无扰切换保证，特别是增量式在误差不变时不会把新kp的作用直接当作一个全新的位置式输出。
++
++检测到mode变更时，会清掉旧模式历史和输出，保留当前ref/fdb，再计算新模式第一步。构造器的非法int模式不会通过uint8窄化错误地变成合法模式。
++
++目标、反馈、增益、上限或必要历史出现NaN/Infinity，以及误差差值超出float表示范围时，输出与内部历史归零。当前目标与反馈保留，修复输入后可继续计算；上层仍应记录传感器故障，不能把0输出当成通信正常的证明。
++
++第一次更新/清零后历史误差为0，非零目标可能产生D项跳变，即微分冲击。当前不包含微分滤波、对反馈求导、角度回绕误差或自动调参。
++
++一个PID对象由一个控制线程维护；若其他线程要调参，通过消息或显式同步转交，不在UpdateResult运行中修改公共字段。
++
++## 7. 使用示例
++
++```cpp
++PID controller(2.0f, 0.5f, 1.0f, 100.0f, 50.0f, PID_POSITION);
++// 参数仅用于公式演示，不是M2006调参建议。
++controller.ref = 2.0f;
++controller.fdb = 0.0f;
++controller.UpdateResult();
++// P=4，I=1，D=2，result=7。
++float output = controller.result;
++float accumulated_i = controller.GetIntegralOutput();
++```
++
++更换构造器最后参数为PID_DELTA可以使用增量式。不要每轮Clear，否则积分和误差历史永远无法建立。
++
++## 8. CRC 保留与验证
++
++正常输入使用原来的查表算法，没有改变CRC表或协议：CRC8的反射逐位多项式0x8C、初值0xFF；CRC16的反射逐位多项式0x8408、初值0xFFFF，均没有额外最终异或。CRC16附加顺序仍是低字节在前、高字节在后。
++
++测试输入ASCII“123456789”：CRC8得到0x0B，CRC16得到0x6F91。测试还通过独立逐位算法对多个长度交叉检查，并验证数据篡改后校验失败。
++
++| API类别 | 长度含义 | 前提 |
++|---|---|---|
++| Get_CRC* | 参与计算的数据字节数 | 调用方提供种子；有效缓冲区长度足够 |
++| Append_CRC* | 数据加校验字节的总长度 | 预留尾部空间；函数写入尾部 |
++| Verify_CRC* | 包括校验字节的总长度 | 缓冲区内容完整 |
++
++Append/Verify保留原来的`length <= 2`拒绝规则：CRC16至少1数据字节加2校验字节；CRC8当前也要求总长至少3，即至少2数据字节。没有把这次PID任务扩展成调整CRC报文长度约定。
++
++Get函数遇到空指针返回传入种子，避免解引用；这不是“空指针报文校验通过”，Verify仍拒绝空指针。返回一个CRC值不能替代上层指针、实际缓冲区长度和协议合法性检查。
++
++通信解析时先检查帧头与长度，确认完整帧和缓冲区边界，再做CRC；CRC也不自动解决拆包、粘包或身份认证。
++
++## 9. Numeric::LimitABS
++
++有效输入限制到[-maxValue,+maxValue]。非法上限或NaN输入返回0；正负Infinity输入在有效上限下饱和。上限0输出0。
++
++基础函数没有HAL依赖，可在控制输出/通信解析的数值检查中使用。它不负责角度归一化、单位转换或范围外的协议错误报告。
++
++## 10. 验证和应用补丁
++
++主机测试：`bash tests/libs/run.sh`（Linux，g++）；使用AddressSanitizer和UndefinedBehaviorSanitizer，关闭当前沙箱不支持的进程泄漏扫描。测试不使用动态分配，不声称完成泄漏检查。
++
++覆盖公式手算、正负积分饱和/反向消退、两种模式未饱和一致性、1万次误差序列的边界、零上限、模式切换、Clear/Tuning、NaN/Infinity、大数、CRC逐位参考、报文损坏、空指针和数值函数。
++
++已完成板级Debug与Release构建。固件当前没有调用真正的PID控制链路，链接器可以移除未使用的PID函数；固件大小不增加不代表源码没编译。行为验证来自独立测试，实际控制效果和运行耗时仍待硬件闭环验证。本次按之前约定不执行硬件测试。
++
++把解压出的 `libs-pid.patch` 放在包含board/libs的工程根目录，在VS Code PowerShell终端：
++
++```powershell
++git status
++git apply --check .\libs-pid.patch
++git apply .\libs-pid.patch
++cd board
++cmake --preset Debug
++cmake --build --preset Debug
++```
++
++若check失败，先核对分支、基线和本地改动，不强行覆盖。无需重复应用BSP或ThreadX补丁。本次未向GitHub推送。
++
++建议commit：`feat(libs): implement position and incremental PID with output and integral limits`。
+diff --git a/docs/logs.md b/docs/logs.md
+index 318766b..c2476cc 100644
+--- a/docs/logs.md
++++ b/docs/logs.md
+@@ -23,3 +23,14 @@
+ - 直接读取 ELF 向量表，核对 PendSV、SysTick、TIM6、CAN1/2 RX0、USART1/6、DMA2 Stream1/2/6/7 共11个入口，均匹配实际符号。
+ - Linux x86-64 HAL 模拟测试（UBSan）通过：未初始化、错误参数/映射/NVIC、CAN队列、UART复制/重装填/溢出/错误恢复、PWM边界和多通道、PRIMASK恢复。
+ - 按用户要求跳过硬件测试。未运行 CubeMX GUI 重新生成；Normal DMA 连续流量丢失窗口、电气与真实并发时序仍需上板验证。
++
++## 2026-10-10：libs PID 与基础函数
++
++- 基线：main 474cef570bb2502bb4fff265851e86fbdfaa1219，已包含BSP。
++- 补全位置式与增量式PID，输出限幅与累计积分限幅；增量式使用实际允许的积分增量，GetIntegralOutput用于观察累计I。
++- Clear、模式变更与非法输入清理历史，Tuning拒绝非有限参数；double中间量避免限幅前溢出，尚未测量MCU执行时间。
++- 保留CRC表与正常报文结果、CRC16字节顺序和最短长度约定；补齐CRC8空指针保护，CRC16空指针返回调用方种子。
++- Numeric::LimitABS补充负/非有限上限与NaN输入处理。
++- g++主机测试通过（ASan/UBSan；LeakSanitizer因沙箱进程访问限制关闭，不作为泄漏验证）：公式、饱和/反向积分、1万次限幅、Clear/Tuning/模式切换、异常浮点、独立逐位CRC参考及损坏报文。
++- Arm GNU13.2.1板级Debug/Release构建通过，日志未见warning/error；Debug FLASH40020 B、Release FLASH21856 B，普通SRAM均30472 B。PID尚未接入运行控制链路，未引用函数可被链接器移除。
++- 未上板、不启动电机或加热；闭环参数整定、实际采样周期和运行耗时待硬件验证。
+diff --git a/libs/include/crc.hpp b/libs/include/crc.hpp
+index ead19ee..ec9d930 100644
+--- a/libs/include/crc.hpp
++++ b/libs/include/crc.hpp
+@@ -10,6 +10,9 @@ extern "C" {
+ 
+ #include <stdint.h>
+ 
++// Get_* returns the supplied seed for a null buffer; Verify_* rejects null.
++// All lengths are total buffer lengths for Append/Verify (include CRC bytes).
++
+ /**
+  * @brief CRC16 Verify function
+  * @param[in] pchMessage : Data to Verify,
+diff --git a/libs/include/math.hpp b/libs/include/math.hpp
+index 2b0a472..e7184c9 100644
+--- a/libs/include/math.hpp
++++ b/libs/include/math.hpp
+@@ -3,6 +3,7 @@
+ 
+ namespace Numeric
+ {
++    // Symmetric clamp. Invalid limit/NaN input -> 0; infinite input saturates.
+     float LimitABS(float input, float maxValue);
+ }
+ 
+diff --git a/libs/include/pid.hpp b/libs/include/pid.hpp
+index e743d0f..c1d25db 100644
+--- a/libs/include/pid.hpp
++++ b/libs/include/pid.hpp
+@@ -45,6 +45,15 @@ public:
+     void Tuning(float tuning_kp, float tuning_ki, float tuning_kd);
+     void UpdateResult();
+     void Clear();
++
++    // Both modes: accumulated integral contribution, bounded by maxIOut.
++    // Position iResult = I[k]; delta iResult = I[k] - I[k-1].
++    float GetIntegralOutput() const { return integral_; }
++
++private:
++    float integral_ = 0.0f;
++    uint8_t previous_mode_ = 0;
++    void ResetState(); // Preserve ref/fdb; used on faults and mode changes.
+ };
+ 
+ #endif //RM26_PID_HPP
+diff --git a/libs/src/crc.cpp b/libs/src/crc.cpp
+index 722c74a..f52fbf5 100644
+--- a/libs/src/crc.cpp
++++ b/libs/src/crc.cpp
+@@ -41,7 +41,7 @@ uint16_t Get_CRC16_Check_Sum(const uint8_t *pchMessage, uint32_t dwLength, uint1
+   uint8_t ch_data;
+ 
+   if (pchMessage == nullptr)
+-    return 0xFFFF;
++    return wCRC;
+   while (dwLength--)
+   {
+     ch_data = *pchMessage++;
+@@ -114,6 +114,9 @@ uint8_t Get_CRC8_Check_Sum(const uint8_t *pchMessage, uint16_t dwLength, uint8_t
+ {
+   uint8_t ucIndex;
+ 
++  if (pchMessage == nullptr)
++    return ucCRC8;
++
+   while (dwLength--)
+   {
+     ucIndex = ucCRC8 ^ (*pchMessage++);
+@@ -148,4 +151,4 @@ uint32_t Verify_CRC8_Check_Sum(const uint8_t *pchMessage, uint16_t dwLength)
+   ucExpected = Get_CRC8_Check_Sum(pchMessage, dwLength - 1, CRC8_INIT);
+ 
+   return (ucExpected == pchMessage[dwLength - 1]);
+-}
+\ No newline at end of file
++}
+diff --git a/libs/src/math.cpp b/libs/src/math.cpp
+index 46de9de..ff139ce 100644
+--- a/libs/src/math.cpp
++++ b/libs/src/math.cpp
+@@ -1,9 +1,12 @@
+ #include "math.hpp"
++#include <cmath>
+ 
+ namespace Numeric
+ {
+     float LimitABS(float input, float maxValue)
+     {
++        if (!std::isfinite(maxValue) || maxValue < 0.0f || std::isnan(input))
++            return 0.0f;
+         if (input > maxValue)
+             return maxValue;
+         if (input < -maxValue)
+diff --git a/libs/src/pid.cpp b/libs/src/pid.cpp
+index b80e1e7..567fe4b 100644
+--- a/libs/src/pid.cpp
++++ b/libs/src/pid.cpp
+@@ -1,13 +1,27 @@
+ #include "pid.hpp"
++#include <cmath>
++#include <limits>
++
++namespace {
++float clamp(double value, float limit)
++{
++    if (value > limit) return limit;
++    if (value < -static_cast<double>(limit)) return -limit;
++    return static_cast<float>(value);
++}
++}
+ 
+ PID::PID(float kp, float ki, float kd, float maxOut, float maxIOut, int mode)
+-    : mode(mode), kp(kp), ki(ki), kd(kd), maxOut(maxOut), maxIOut(maxIOut)
++    : mode(mode == PID_POSITION || mode == PID_DELTA ? mode : 0),
++      kp(kp), ki(ki), kd(kd), maxOut(maxOut), maxIOut(maxIOut)
+ {
+     Clear();
+ }
+ 
+ void PID::Tuning(float tuning_kp, float tuning_ki, float tuning_kd)
+ {
++    if (!std::isfinite(tuning_kp) || !std::isfinite(tuning_ki) ||
++        !std::isfinite(tuning_kd)) return;
+     kp = tuning_kp;
+     ki = tuning_ki;
+     kd = tuning_kd;
+@@ -15,18 +29,63 @@ void PID::Tuning(float tuning_kp, float tuning_ki, float tuning_kd)
+ 
+ void PID::UpdateResult()
+ {
++    if (!std::isfinite(ref) || !std::isfinite(fdb) ||
++        !std::isfinite(kp) || !std::isfinite(ki) || !std::isfinite(kd) ||
++        !std::isfinite(maxOut) || !std::isfinite(maxIOut) ||
++        maxOut < 0.0f || maxIOut < 0.0f ||
++        (mode != PID_POSITION && mode != PID_DELTA))
++    {
++        ResetState();
++        return;
++    }
++    if (mode != previous_mode_) ResetState();
++    const double error = static_cast<double>(ref) - fdb;
++    const double float_max = std::numeric_limits<float>::max();
++    if (std::fabs(error) > float_max || !std::isfinite(result) ||
++        !std::isfinite(err[0]) || !std::isfinite(err[1]) || !std::isfinite(err[2]))
++    {
++        ResetState();
++        return;
++    }
+     err[2] = err[1];
+     err[1] = err[0];
+-    err[0] = ref - fdb;
++    err[0] = static_cast<float>(error);
++
++    const float previous_integral = integral_;
++    integral_ = clamp(static_cast<double>(integral_) + static_cast<double>(ki) * error,
++                      maxIOut);
++    double p, i, d, output;
++    if (mode == PID_POSITION)
++    {
++        p = static_cast<double>(kp) * error;
++        i = integral_;
++        d = static_cast<double>(kd) * (error - err[1]);
++        output = p + i + d;
++    }
++    else
++    {
++        p = static_cast<double>(kp) * (error - err[1]);
++        i = static_cast<double>(integral_) - previous_integral;
++        d = static_cast<double>(kd) * (error - 2.0 * err[1] + err[2]);
++        output = static_cast<double>(result) + p + i + d;
++    }
++    // Use double intermediates to avoid overflow before applying float limits.
++    pResult = clamp(p, std::numeric_limits<float>::max());
++    iResult = clamp(i, std::numeric_limits<float>::max());
++    dResult = clamp(d, std::numeric_limits<float>::max());
++    result = clamp(output, maxOut);
++}
+ 
+-    // TODO: 按 mode 实现位置式或增量式 PID，并限制积分和最终输出。
+-    // 完成前始终保持零输出。
++void PID::ResetState()
++{
++    err[0] = err[1] = err[2] = 0.0f;
+     pResult = iResult = dResult = result = 0.0f;
++    integral_ = 0.0f;
++    previous_mode_ = mode;
+ }
+ 
+ void PID::Clear()
+ {
+     ref = fdb = 0.0f;
+-    err[0] = err[1] = err[2] = 0.0f;
+-    pResult = iResult = dResult = result = 0.0f;
++    ResetState();
+ }
+diff --git a/tests/libs/run.sh b/tests/libs/run.sh
+new file mode 100644
+index 0000000..0186acb
+--- /dev/null
++++ b/tests/libs/run.sh
+@@ -0,0 +1,7 @@
++#!/usr/bin/env bash
++set -eu
++cd "$(dirname "$0")/../.."
++mkdir -p build/libs-tests
++g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ilibs/include tests/libs/test_libs.cpp libs/src/pid.cpp libs/src/math.cpp libs/src/crc.cpp -o build/libs-tests/test_libs
++# No dynamic allocation under test; LSan cannot enumerate processes in this sandbox.
++ASAN_OPTIONS=detect_leaks=0 build/libs-tests/test_libs
+diff --git a/tests/libs/test_libs.cpp b/tests/libs/test_libs.cpp
+new file mode 100644
+index 0000000..fe1da5c
+--- /dev/null
++++ b/tests/libs/test_libs.cpp
+@@ -0,0 +1,102 @@
++#include "pid.hpp"
++#include "crc.hpp"
++#include <cassert>
++#include <cmath>
++#include <limits>
++#include <cstdio>
++#include <cstdint>
++#include <initializer_list>
++static void near(float a,float b) { assert(std::fabs(a-b)<1e-4f); }
++static uint16_t crc16(const uint8_t *d,unsigned n,uint16_t v) {
++    while(n--) { v^=*d++; for(unsigned b=0;b<8;++b) v=(v&1)?(v>>1)^0x8408:v>>1; }
++    return v;
++}
++static uint8_t crc8(const uint8_t *d,unsigned n,uint8_t v) {
++    while(n--) { v^=*d++; for(unsigned b=0;b<8;++b) v=(v&1)?(v>>1)^0x8c:v>>1; }
++    return v;
++}
++int main() {
++    PID pos(2,0.5f,1,100,50),delta(2,0.5f,1,100,50,PID_DELTA);
++    float errors[]={2,3,-1,0,4};
++    float expected[]={7,9.5f,-4,3,16};
++    for(unsigned k=0;k<5;++k) {
++        pos.ref=delta.ref=errors[k]; pos.UpdateResult(); delta.UpdateResult();
++        near(pos.result,expected[k]); near(delta.result,expected[k]);
++    }
++    near(pos.err[0],4); near(pos.err[1],0); near(pos.err[2],-1);
++    near(delta.pResult,8); near(delta.dResult,3); near(delta.iResult,2);
++    for(auto mode:{PID_POSITION,PID_DELTA}) {
++        PID p(0,2,0,100,3,mode);
++        p.ref=1; p.UpdateResult(); near(p.result,2); near(p.GetIntegralOutput(),2);
++        p.UpdateResult(); near(p.result,3); near(p.GetIntegralOutput(),3);
++        p.UpdateResult(); near(p.result,3);
++        near(p.iResult,mode==PID_DELTA?0:3);
++        p.ref=-1; p.UpdateResult(); near(p.result,1);
++        p.UpdateResult(); near(p.result,-1);
++        p.UpdateResult(); near(p.result,-3);
++        p.ref=1; p.UpdateResult(); near(p.result,-1);
++        p.maxIOut=0; p.UpdateResult(); near(p.GetIntegralOutput(),0);
++        p.Clear(); near(p.result,0); near(p.ref,0); near(p.fdb,0); near(p.GetIntegralOutput(),0);
++        PID clip(10,0,0,5,0,mode);
++        clip.ref=1; clip.UpdateResult(); near(clip.result,5);
++        clip.ref=-1; clip.UpdateResult(); near(clip.result,-5);
++        PID zero(1,1,1,0,0,mode); zero.ref=5; zero.UpdateResult(); near(zero.result,0);
++    }
++    PID d(1,0,0,100,0,PID_DELTA); d.ref=4; d.UpdateResult(); d.UpdateResult(); near(d.result,4);
++    PID reversal(0,10,0,100,3,PID_DELTA);
++    reversal.ref=1; reversal.UpdateResult(); near(reversal.GetIntegralOutput(),3);
++    reversal.ref=-1; reversal.UpdateResult(); near(reversal.GetIntegralOutput(),-3);
++    near(reversal.iResult,-6); near(reversal.result,-3);
++    uint32_t random=1;
++    PID bounded_pos(5,0.4f,2,7,3),bounded_delta(5,0.4f,2,7,3,PID_DELTA);
++    for(unsigned k=0;k<10000;++k) {
++        random=random*1664525U+1013904223U;
++        const float error=static_cast<int>(random%201)-100;
++        for(auto *p:{&bounded_pos,&bounded_delta}) {
++            p->ref=error; p->UpdateResult();
++            assert(std::isfinite(p->result) && std::fabs(p->result)<=7);
++            assert(std::fabs(p->GetIntegralOutput())<=3);
++        }
++    }
++    d.ref=6; d.UpdateResult(); near(d.result,6); near(d.pResult,2);
++    d.mode=PID_POSITION; d.UpdateResult(); near(d.result,6);
++    d.mode=PID_DELTA; d.UpdateResult(); near(d.result,6);
++    PID gain(1,1,1,100,10); gain.Tuning(2,3,4); near(gain.kp,2); near(gain.ki,3); near(gain.kd,4);
++    const float nan=std::numeric_limits<float>::quiet_NaN(),inf=std::numeric_limits<float>::infinity();
++    gain.Tuning(nan,9,9); near(gain.kp,2); near(gain.ki,3);
++    gain.ref=nan; gain.UpdateResult(); near(gain.result,0); near(gain.GetIntegralOutput(),0);
++    gain.ref=1; gain.UpdateResult(); near(gain.result,9);
++    gain.maxOut=-1; gain.UpdateResult(); near(gain.result,0);
++    gain.maxOut=inf; gain.UpdateResult(); near(gain.result,0);
++    PID invalid(1,1,1,10,10,257); invalid.ref=1; invalid.UpdateResult(); near(invalid.result,0);
++    PID large(1e30f,0,0,12,0); large.ref=1e30f; large.UpdateResult(); near(large.result,12);
++    assert(std::isfinite(large.pResult));
++    large.ref=std::numeric_limits<float>::max(); large.fdb=-large.ref; large.UpdateResult(); near(large.result,0);
++    PID dirty(1,0,0,10,1,PID_DELTA); dirty.result=nan; dirty.ref=1; dirty.UpdateResult(); near(dirty.result,0);
++    near(Numeric::LimitABS(3,2),2); near(Numeric::LimitABS(-3,2),-2);
++    near(Numeric::LimitABS(1,2),1); near(Numeric::LimitABS(1,-2),0);
++    near(Numeric::LimitABS(nan,2),0); near(Numeric::LimitABS(inf,2),2);
++    near(Numeric::LimitABS(1,inf),0); near(Numeric::LimitABS(1,0),0);
++    const uint8_t text[]={'1','2','3','4','5','6','7','8','9'};
++    assert(Get_CRC8_Check_Sum(text,9,0xff)==0x0b);
++    assert(Get_CRC16_Check_Sum(text,9,0xffff)==0x6f91);
++    uint8_t data[64]; uint32_t seed=7;
++    for(unsigned n=0;n<64;++n) {
++        seed=seed*1664525U+1013904223U; data[n]=seed>>24;
++        assert(Get_CRC8_Check_Sum(data,n,0xff)==crc8(data,n,0xff));
++        assert(Get_CRC16_Check_Sum(data,n,0xffff)==crc16(data,n,0xffff));
++    }
++    uint8_t frame[16]{}; for(unsigned i=0;i<14;++i) frame[i]=i;
++    Append_CRC16_Check_Sum(frame,16); assert(Verify_CRC16_Check_Sum(frame,16));
++    assert(frame[14]==(crc16(frame,14,0xffff)&0xff) && frame[15]==(crc16(frame,14,0xffff)>>8));
++    frame[0]^=1; assert(!Verify_CRC16_Check_Sum(frame,16));
++    Append_CRC8_Check_Sum(frame,16); assert(Verify_CRC8_Check_Sum(frame,16));
++    frame[0]^=1; assert(!Verify_CRC8_Check_Sum(frame,16));
++    assert(Get_CRC8_Check_Sum(nullptr,3,0x12)==0x12);
++    assert(Get_CRC16_Check_Sum(nullptr,3,0x1234)==0x1234);
++    assert(!Verify_CRC8_Check_Sum(nullptr,8) && !Verify_CRC16_Check_Sum(nullptr,8));
++    Append_CRC8_Check_Sum(nullptr,8); Append_CRC16_Check_Sum(nullptr,8);
++    uint8_t shortbuf[2]={0x12,0x34}; Append_CRC16_Check_Sum(shortbuf,2); Append_CRC8_Check_Sum(shortbuf,2);
++    assert(shortbuf[0]==0x12 && shortbuf[1]==0x34);
++    std::puts("PASS: PID formulas, limits, recovery, CRC references and numeric guards");
++}

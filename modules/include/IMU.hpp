@@ -15,8 +15,7 @@
  * @param y y轴加速度
  * @param z z轴加速度
  */
-typedef struct acc_data_t
-{
+typedef struct acc_data_t {
     float x;
     float y;
     float z;
@@ -27,12 +26,11 @@ typedef struct acc_data_t
  * @struct gyro_data_t
  * @brief 陀螺仪数据结构体
  * 存储陀螺仪的数据
- * @param roll 横滚角
- * @param pitch 俯仰角
- * @param yaw 偏航角
+ * @param x x轴角速度，rad/s
+ * @param y y轴角速度，rad/s
+ * @param z z轴角速度，rad/s
  */
-typedef struct gyro_data_t
-{
+typedef struct gyro_data_t {
     float x;
     float y;
     float z;
@@ -43,22 +41,20 @@ typedef struct gyro_data_t
  * @brief IMU错误状态结构体
  * 用于判断IMU是否正常
  */
-typedef struct imu_error_t
-{
-    bool ACC_CHIP_ID_ERR = true;       // 加速度计ID错误则为true
-    bool ACC_DATA_ERR = true;          // 加速度计数据错误则为true
-    bool GYRO_CHIP_ID_ERR = true;      // 陀螺仪ID错误则为true
-    bool GYRO_DATA_ERR = true;         // 陀螺仪数据错误则为true
-    bool INIT_ERR = true;              // 初始化错误则为true
-    bool CALIBRATE_ERR = false;        // 标定错误则为true
-    bool TEMP_CTRL_ERR = true;         // 温度控制错误则为true
+typedef struct imu_error_t {
+    bool ACC_CHIP_ID_ERR = true;  // 加速度计ID错误则为true
+    bool ACC_DATA_ERR = true;     // 加速度计数据错误则为true
+    bool GYRO_CHIP_ID_ERR = true; // 陀螺仪ID错误则为true
+    bool GYRO_DATA_ERR = true;    // 陀螺仪数据错误则为true
+    bool INIT_ERR = true;         // 初始化错误则为true
+    bool CALIBRATE_ERR = false;   // 标定错误则为true
+    bool TEMP_CTRL_ERR = true;    // 温度控制错误则为true
 } imu_error_t;
 
-class cIMU
-{
-public:
-    acc_data_t acc_data;
-    gyro_data_t gyro_data;
+class cIMU {
+  public:
+    acc_data_t acc_data{};
+    gyro_data_t gyro_data{};
     imu_error_t self_test;
 
     PID TempPid = PID(0.1f, 0.0f, 0.0f, 25000.0f, 3.0f, PID_POSITION);
@@ -102,15 +98,13 @@ public:
 
     /**
      * @brief 验证加速度计数据
-     * @todo 未实现
      */
     virtual void VerifyAccData() = 0;
 
     /**
      * @brief 验证陀螺仪数据
-     * @todo 未实现
      */
     virtual void VerifyGyroData() = 0;
 };
 
-#endif //RM26_H7_IMU_HPP
+#endif // RM26_H7_IMU_HPP

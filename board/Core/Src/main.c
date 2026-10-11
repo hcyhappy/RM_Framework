@@ -28,6 +28,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_threadx.h"
+#include "bsp.hpp"
 
 /* USER CODE END Includes */
 
@@ -103,6 +105,12 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
+  if (bsp_Init() != HAL_OK)
+  {
+    HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
+    Error_Handler();
+  }
+  app_threadx_start();
 
   /* USER CODE END 2 */
 

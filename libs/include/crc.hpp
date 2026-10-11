@@ -10,6 +10,9 @@ extern "C" {
 
 #include <stdint.h>
 
+// Get_* returns the supplied seed for a null buffer; Verify_* rejects null.
+// All lengths are total buffer lengths for Append/Verify (include CRC bytes).
+
 /**
  * @brief CRC16 Verify function
  * @param[in] pchMessage : Data to Verify,

@@ -45,6 +45,15 @@ public:
     void Tuning(float tuning_kp, float tuning_ki, float tuning_kd);
     void UpdateResult();
     void Clear();
+
+    // Both modes: accumulated integral contribution, bounded by maxIOut.
+    // Position iResult = I[k]; delta iResult = I[k] - I[k-1].
+    float GetIntegralOutput() const { return integral_; }
+
+private:
+    float integral_ = 0.0f;
+    uint8_t previous_mode_ = 0;
+    void ResetState(); // Preserve ref/fdb; used on faults and mode changes.
 };
 
 #endif //RM26_PID_HPP
